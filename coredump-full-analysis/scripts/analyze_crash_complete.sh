@@ -607,7 +607,7 @@ find_deb_files_for_version() {
     # 根据 ARCH 参数确定文件名中的架构后缀
     local arch_suffix
     case "$arch" in
-        x86) arch_suffix="i386" ;;
+        x86) arch_suffix="amd64" ;;
         x86_64) arch_suffix="amd64" ;;
         arm64) arch_suffix="arm64" ;;
         aarch64) arch_suffix="arm64" ;;  # aarch64 对应 deb 包的 arm64
@@ -616,11 +616,13 @@ find_deb_files_for_version() {
 
     find "$dl_dir" -maxdepth 1 -type f \( \
         -name "${package}_${version}_${arch_suffix}.deb" -o \
+        -name "${package}_${version}-*_${arch_suffix}.deb" -o \
         -name "${package}-${arch_suffix}_${version}_${arch_suffix}.deb" -o \
         -name "${package}_${version}-${arch_suffix}.deb" -o \
         -name "${package}_${version}+*.deb" -o \
         -name "${package}_${version}.*.deb" -o \
         -name "${package}-dbgsym_${version}_${arch_suffix}.deb" -o \
+        -name "${package}-dbgsym_${version}-*_${arch_suffix}.deb" -o \
         -name "${package}-dbgsym_${version}-${arch_suffix}.deb" -o \
         -name "${package}-dbgsym_${version}+*.deb" -o \
         -name "${package}-dbgsym_${version}.*.deb" \

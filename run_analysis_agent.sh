@@ -13,6 +13,8 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # 生成带时间戳的workspace路径
 generate_workspace_with_timestamp() {
     local root_dir="${1:-$HOME}"
@@ -24,7 +26,7 @@ PACKAGES=""
 START_DATE=""
 END_DATE=""
 SYS_VERSION="1070-1075"
-SKILLS_DIR="${SKILLS_DIR:-$HOME/.openclaw/skills/coredump-analysis-skills}"
+SKILLS_DIR="${SKILLS_DIR:-$SCRIPT_DIR}"
 PACKAGES_FILE="$SKILLS_DIR/packages.txt"
 LOAD_ACCOUNTS_SCRIPT="$SKILLS_DIR/coredump-full-analysis/scripts/load_accounts.sh"
 
@@ -442,7 +444,7 @@ is_running() {
 launch_package() {
     local pkg="$1"
     log_package_status "$pkg" "running" "" "analysis started"
-    cd "$HOME/.openclaw/skills/coredump-analysis-skills/coredump-full-analysis/scripts"
+    cd "$SKILLS_DIR/coredump-full-analysis/scripts"
     local cmd=(bash analyze_crash_complete.sh
         --packages "$pkg"
         --arch "$ARCH"
