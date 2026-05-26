@@ -62,6 +62,12 @@ def parse_args():
         default=0,
         help='最大分析崩溃数量（默认: 0，表示分析全部）'
     )
+    parser.add_argument(
+        '--addr2line-max-frames',
+        type=int,
+        default=100,
+        help='addr2line 最大解析帧数（默认: 100）'
+    )
 
     return parser.parse_args()
 
@@ -383,7 +389,7 @@ def generate_fix_suggestions(crash: Dict, package: str, version: str) -> List[st
     return suggestions
 
 
-def analyze_version(package: str, version: str, workspace: str, max_crashes: int) -> Dict:
+def analyze_version(package: str, version: str, workspace: str, max_crashes: int, addr2line_max_frames: int) -> Dict:
     """分析指定版本的所有崩溃"""
     version_clean = clean_version(version)
     version_dir = version_clean.replace('.', '_').replace('+', '_').replace('-', '_')
@@ -436,11 +442,14 @@ def analyze_version(package: str, version: str, workspace: str, max_crashes: int
     if HAS_ENHANCED:
         print(f"🔧 运行增强分析 (addr2line / objdump / git blame / LLM / debuginfod) ...")
         enhanced_results, enhanced_stats = run_enhanced_analysis_for_version(
-            analyzed_crashes, workspace, package, version_clean
+            analyzed_crashes, workspace, package, version_clean,
+            max_addr2line_frames=addr2line_max_frames,
         )
         # Attach enhanced results to each crash
         for crash, enhanced in zip(analyzed_crashes, enhanced_results):
             crash['enhanced'] = enhanced
+            if enhanced.get('degradation_reasons'):
+                crash['enhanced_degradation_reasons'] = enhanced['degradation_reasons']
 
             # Use enhanced data to improve fixability assessment
             improvement = enhanced.get('improved_fixability', {})
@@ -509,6 +518,10 @@ def analyze_version(package: str, version: str, workspace: str, max_crashes: int
         'crashes': analyzed_crashes,
         'recommendations': [],
         'enhanced_stats': enhanced_stats if HAS_ENHANCED else {},
+        'deep_dive_stats': {
+            'performed': sum(1 for c in analyzed_crashes if c.get('enhanced', {}).get('deep_dive', {}).get('performed')),
+            'improved': sum(1 for c in analyzed_crashes if c.get('enhanced', {}).get('deep_dive', {}).get('improved')),
+        } if HAS_ENHANCED else {},
     }
 
     # 生成总体建议
@@ -551,7 +564,12 @@ def save_markdown_report(analysis: Dict, output_file: Path):
             f.write(f"- Git Blame/Log: {estats.get('git_available', 0)}\n")
             f.write(f"- objdump 反汇编: {estats.get('objdump_available', 0)}\n")
             f.write(f"- LLM 分析: {estats.get('llm_analyzed', 0)}\n")
-            f.write(f"- 可修复性提升: {estats.get('fixability_improved', 0)}\n\n")
+            f.write(f"- 可修复性提升: {estats.get('fixability_improved', 0)}\n")
+            dstats = analysis.get('deep_dive_stats', {})
+            if dstats:
+                f.write(f"- uncertain 二次深挖: {dstats.get('performed', 0)}\n")
+                f.write(f"- 深挖取得增益: {dstats.get('improved', 0)}\n")
+            f.write("\n")
 
         # 按信号类型统计
         f.write("## 按信号类型统计\n\n")
@@ -683,6 +701,18 @@ def save_markdown_report(analysis: Dict, output_file: Path):
                     f.write(f"\n**debuginfod**: debug symbols found on {di_r.get('server', '?')}\n")
                     f.write(f"  URL: {di_r.get('url', '?')}\n")
 
+                deep_dive = enhanced.get('deep_dive', {})
+                if deep_dive.get('performed'):
+                    f.write("\n**uncertain 二次深挖**:\n")
+                    f.write(f"  - frame_limit: {deep_dive.get('frame_limit', 0)}\n")
+                    f.write(f"  - improved: {deep_dive.get('improved', False)}\n")
+
+                degradation_reasons = enhanced.get('degradation_reasons', [])
+                if degradation_reasons:
+                    f.write("\n**分析降级原因**:\n")
+                    for reason in degradation_reasons:
+                        f.write(f"  - {reason}\n")
+
             f.write("\n")
 
         # 建议
@@ -706,7 +736,13 @@ def main():
     print()
 
     # 分析版本
-    analysis = analyze_version(args.package, args.version, args.workspace, args.max_crashes)
+    analysis = analyze_version(
+        args.package,
+        args.version,
+        args.workspace,
+        args.max_crashes,
+        args.addr2line_max_frames,
+    )
 
     if 'error' in analysis:
         print(f"错误: {analysis['error']}")

@@ -926,10 +926,12 @@ class EnhancedAnalyzer:
     """Orchestrates all enhanced analysis methods for a single crash."""
 
     def __init__(self, workspace: str, package: str, version: str,
-                 llm_config: Optional[Dict] = None):
+                 llm_config: Optional[Dict] = None,
+                 max_addr2line_frames: int = 100):
         self.workspace = workspace
         self.package = package
         self.version = version
+        self.max_addr2line_frames = max(1, int(max_addr2line_frames or 100))
 
         ws_path = Path(workspace)
         source_dir = ws_path / '3.代码管理' / package
@@ -949,52 +951,131 @@ class EnhancedAnalyzer:
         git_analysis, llm_analysis, debuginfod, improved_fixability.
         """
         result = {}
+        degradation_reasons = []
 
         # Parse frames and compute offsets
         frames = parse_frame_addresses(crash.get('stack_info', ''))
         frames = compute_offsets(frames)
+        if not frames:
+            degradation_reasons.append('no_parsed_frames')
 
         # 1. addr2line resolution
-        a2l = self.addr2line.resolve_frames(frames, max_frames=20)
+        a2l = self.addr2line.resolve_frames(
+            frames, max_frames=self.max_addr2line_frames
+        )
         result['addr2line'] = a2l
 
+        statuses = [r.get('status') for r in a2l]
+        if not a2l:
+            degradation_reasons.append('no_addr2line_results')
+        if any(status == 'lib_not_found' for status in statuses):
+            degradation_reasons.append('library_not_found')
+        if any(status == 'no_offset' for status in statuses):
+            degradation_reasons.append('missing_frame_offset')
+        if any(status == 'timeout' for status in statuses):
+            degradation_reasons.append('addr2line_timeout')
+        if any(status == 'error' for status in statuses):
+            degradation_reasons.append('addr2line_error')
+        if any(status == 'unresolved' for status in statuses):
+            degradation_reasons.append('addr2line_unresolved')
+
         # 1b. Source context for resolved frames
-        source_contexts = []
+        source_contexts = self._collect_source_contexts(a2l, resolved_limit=3, partial_limit=2)
         resolved_frames = [r for r in a2l if r.get('status') == 'ok' and r.get('file')]
         partial_with_src = [r for r in a2l if r.get('status') == 'partial_with_source' and r.get('source_file')]
-        for r in resolved_frames[:3]:
-            ctx = self.addr2line.get_source_context(r['file'], r['line'])
-            source_contexts.append(ctx)
-        # For partial resolution with source file found, search for relevant lines
-        for r in partial_with_src[:2]:
-            ctx = self._get_partial_source_context(r)
-            source_contexts.append(ctx)
         result['source_context'] = source_contexts
+        if partial_with_src and not any(ctx.get('available') for ctx in source_contexts):
+            degradation_reasons.append('source_context_unavailable')
+        elif not resolved_frames and not partial_with_src:
+            degradation_reasons.append('no_resolved_source_frames')
 
         # 2. objdump disassembly for key frame
-        key_frame = crash.get('key_frame')
-        objdump_result = None
-        if key_frame:
-            # Find the frame with the key frame's library
-            for f in frames:
-                lib = f.get('library', '')
-                if (lib == key_frame.get('library') or
-                        key_frame.get('library', '') in lib):
-                    if f.get('offset') is not None:
-                        objdump_result = self.objdump.disassemble_around(
-                            lib, f['offset']
-                        )
-                        break
+        objdump_result = self._get_objdump_for_crash_frames(crash, frames)
         result['objdump'] = objdump_result
+        if crash.get('key_frame') and not objdump_result:
+            degradation_reasons.append('objdump_not_available')
 
         # 3. git blame/log for crash source
+        git_results = self._collect_git_results(a2l, max_candidates=2)
+        result['git_analysis'] = git_results
+        if (resolved_frames or partial_with_src) and not git_results:
+            degradation_reasons.append('git_analysis_unavailable')
+
+        deep_dive = None
+        if crash.get('fixable') == 'uncertain':
+            deep_dive = self._run_uncertain_deep_dive(crash, frames, a2l)
+            if deep_dive.get('performed'):
+                result['deep_dive'] = deep_dive
+                deep_a2l = deep_dive.get('addr2line', [])
+                deep_source_contexts = deep_dive.get('source_context', [])
+                deep_git_results = deep_dive.get('git_analysis', [])
+                if self._count_usable_frames(deep_a2l) > self._count_usable_frames(a2l):
+                    a2l = deep_a2l
+                    result['addr2line'] = a2l
+                if sum(1 for c in deep_source_contexts if c.get('available')) > sum(1 for c in source_contexts if c.get('available')):
+                    source_contexts = deep_source_contexts
+                    result['source_context'] = source_contexts
+                if len(deep_git_results) > len(git_results):
+                    git_results = deep_git_results
+                    result['git_analysis'] = git_results
+                if deep_dive.get('objdump') and not objdump_result:
+                    objdump_result = deep_dive.get('objdump')
+                    result['objdump'] = objdump_result
+                degradation_reasons.extend(deep_dive.get('degradation_reasons', []))
+                if deep_dive.get('performed') and not deep_dive.get('improved'):
+                    degradation_reasons.append('uncertain_deep_dive_no_gain')
+
+        # 5. debuginfod (if we have buildid)
+        buildid = crash.get('buildid', '')
+        di_result = None
+        if buildid:
+            di_result = self.debuginfod.find_debug(buildid)
+            if not di_result or not di_result.get('available'):
+                degradation_reasons.append('debuginfod_unavailable')
+        result['debuginfod'] = di_result
+
+        # 4. LLM analysis (only for uncertain crashes)
+        llm_result = None
+        final_resolved_frames = [r for r in a2l if r.get('status') == 'ok' and r.get('file')]
+        final_partial_with_src = [r for r in a2l if r.get('status') == 'partial_with_source' and r.get('source_file')]
+        if crash.get('fixable') == 'uncertain' and (final_resolved_frames or final_partial_with_src):
+            llm_result = self.llm.analyze(crash, a2l, source_contexts)
+            if not llm_result or not llm_result.get('available'):
+                degradation_reasons.append('llm_analysis_unavailable')
+        result['llm_analysis'] = llm_result
+
+        # Improved fixability assessment based on enhanced data
+        result['improved_fixability'] = self._improve_fixability(
+            crash, a2l, source_contexts, objdump_result, llm_result
+        )
+        result['degradation_reasons'] = sorted(set(degradation_reasons))
+
+        return result
+
+    def _count_usable_frames(self, a2l_results: List[Dict]) -> int:
+        return sum(1 for r in a2l_results if r.get('status') in ('ok', 'partial_with_source'))
+
+    def _collect_source_contexts(self, a2l_results: List[Dict], resolved_limit: int = 3,
+                                 partial_limit: int = 2) -> List[Dict]:
+        source_contexts = []
+        resolved_frames = [r for r in a2l_results if r.get('status') == 'ok' and r.get('file')]
+        partial_with_src = [r for r in a2l_results if r.get('status') == 'partial_with_source' and r.get('source_file')]
+        for r in resolved_frames[:resolved_limit]:
+            ctx = self.addr2line.get_source_context(r['file'], r['line'])
+            source_contexts.append(ctx)
+        for r in partial_with_src[:partial_limit]:
+            ctx = self._get_partial_source_context(r)
+            source_contexts.append(ctx)
+        return source_contexts
+
+    def _collect_git_results(self, a2l_results: List[Dict], max_candidates: int = 2) -> List[Dict]:
         git_results = []
-        # Use both fully resolved and partial_with_source frames
-        for r in (resolved_frames + partial_with_src)[:2]:
+        resolved_frames = [r for r in a2l_results if r.get('status') == 'ok' and r.get('file')]
+        partial_with_src = [r for r in a2l_results if r.get('status') == 'partial_with_source' and r.get('source_file')]
+        for r in (resolved_frames + partial_with_src)[:max_candidates]:
             file_path = r.get('file') or r.get('source_file')
             line = r.get('line')
             if not file_path or not line:
-                # For partial, try to find the relevant line in source
                 if r.get('source_file') and r.get('function'):
                     found_line = self._find_function_line(r['source_file'], r['function'])
                     if found_line:
@@ -1009,27 +1090,95 @@ class EnhancedAnalyzer:
                     'blame': blame,
                     'log': log,
                 })
-        result['git_analysis'] = git_results
+        return git_results
 
-        # 5. debuginfod (if we have buildid)
-        buildid = crash.get('buildid', '')
-        di_result = None
-        if buildid:
-            di_result = self.debuginfod.find_debug(buildid)
-        result['debuginfod'] = di_result
+    def _get_objdump_for_crash_frames(self, crash: Dict, frames: List[Dict]):
+        key_frame = crash.get('key_frame')
+        if not key_frame:
+            return None
+        prioritized = []
+        key_library = key_frame.get('library', '')
+        if key_library:
+            prioritized.extend([
+                f for f in frames
+                if f.get('library') == key_library or key_library in f.get('library', '')
+            ])
+        prioritized.extend(frames)
+        seen = set()
+        for f in prioritized:
+            frame_key = (f.get('address'), f.get('library'), f.get('offset'))
+            if frame_key in seen:
+                continue
+            seen.add(frame_key)
+            lib = f.get('library', '')
+            if f.get('offset') is not None and lib:
+                result = self.objdump.disassemble_around(lib, f['offset'])
+                if result and result.get('available'):
+                    return result
+        return None
 
-        # 4. LLM analysis (only for uncertain crashes)
-        llm_result = None
-        if crash.get('fixable') == 'uncertain' and (resolved_frames or partial_with_src):
-            llm_result = self.llm.analyze(crash, a2l, source_contexts)
-        result['llm_analysis'] = llm_result
+    def _prioritize_frames_for_deep_dive(self, crash: Dict, frames: List[Dict]) -> List[Dict]:
+        prioritized = []
+        key_frame = crash.get('key_frame') or {}
+        key_library = key_frame.get('library', '')
+        key_symbol = (key_frame.get('symbol') or '').lower()
+        app_symbol = (crash.get('app_layer_symbol') or '').lower()
 
-        # Improved fixability assessment based on enhanced data
-        result['improved_fixability'] = self._improve_fixability(
-            crash, a2l, source_contexts, objdump_result, llm_result
+        if key_library:
+            prioritized.extend([
+                f for f in frames
+                if f.get('library') == key_library or key_library in f.get('library', '')
+            ])
+        if key_symbol:
+            prioritized.extend([
+                f for f in frames
+                if key_symbol and key_symbol in (f.get('symbol') or '').lower()
+            ])
+        if app_symbol:
+            prioritized.extend([
+                f for f in frames
+                if app_symbol and app_symbol in (f.get('symbol') or '').lower()
+            ])
+        prioritized.extend(frames)
+
+        unique = []
+        seen = set()
+        for f in prioritized:
+            frame_key = (f.get('address'), f.get('library'), f.get('offset'))
+            if frame_key in seen:
+                continue
+            seen.add(frame_key)
+            unique.append(f)
+        return unique
+
+    def _run_uncertain_deep_dive(self, crash: Dict, frames: List[Dict], base_a2l: List[Dict]) -> Dict:
+        deep_limit = max(self.max_addr2line_frames * 2, 200)
+        prioritized_frames = self._prioritize_frames_for_deep_dive(crash, frames)
+        deep_a2l = self.addr2line.resolve_frames(prioritized_frames, max_frames=deep_limit)
+        deep_source_contexts = self._collect_source_contexts(
+            deep_a2l, resolved_limit=5, partial_limit=5
         )
-
-        return result
+        deep_git_results = self._collect_git_results(deep_a2l, max_candidates=5)
+        deep_objdump = self._get_objdump_for_crash_frames(crash, prioritized_frames)
+        improved = (
+            self._count_usable_frames(deep_a2l) > self._count_usable_frames(base_a2l)
+            or sum(1 for c in deep_source_contexts if c.get('available')) > 0
+            or len(deep_git_results) > 0
+            or bool(deep_objdump and deep_objdump.get('available'))
+        )
+        degradation_reasons = []
+        if not improved:
+            degradation_reasons.append('uncertain_deep_dive_exhausted')
+        return {
+            'performed': True,
+            'frame_limit': deep_limit,
+            'improved': improved,
+            'addr2line': deep_a2l,
+            'source_context': deep_source_contexts,
+            'git_analysis': deep_git_results,
+            'objdump': deep_objdump,
+            'degradation_reasons': degradation_reasons,
+        }
 
     def _get_partial_source_context(self, frame_result: Dict) -> Dict:
         """Get source context for a partially resolved frame (function name, no line)."""
@@ -1081,12 +1230,17 @@ class EnhancedAnalyzer:
         improvements = {}
 
         resolved_count = sum(1 for r in a2l if r.get('status') == 'ok')
-        if resolved_count == 0:
+        partial_source_count = sum(1 for r in a2l if r.get('status') == 'partial_with_source')
+        usable_source_count = resolved_count + partial_source_count
+        if usable_source_count == 0:
             improvements['resolved'] = False
+            improvements['usable_source_frames'] = 0
             return improvements
 
         improvements['resolved'] = True
         improvements['resolved_frame_count'] = resolved_count
+        improvements['partial_source_frame_count'] = partial_source_count
+        improvements['usable_source_frames'] = usable_source_count
 
         # Check if source context reveals common patterns
         crash_type = None
@@ -1138,13 +1292,20 @@ def run_enhanced_analysis_for_version(
     version: str,
     llm_config: Optional[Dict] = None,
     max_crashes: int = 0,
+    max_addr2line_frames: int = 100,
 ) -> Tuple[List[Dict], Dict]:
     """Run enhanced analysis on all crashes.
 
     Returns (enhanced_results_list, summary_stats).
     Each element of enhanced_results_list corresponds to the input crashes list.
     """
-    analyzer = EnhancedAnalyzer(workspace, package, version, llm_config)
+    analyzer = EnhancedAnalyzer(
+        workspace,
+        package,
+        version,
+        llm_config,
+        max_addr2line_frames=max_addr2line_frames,
+    )
 
     targets = crashes if max_crashes <= 0 else crashes[:max_crashes]
     results = []
