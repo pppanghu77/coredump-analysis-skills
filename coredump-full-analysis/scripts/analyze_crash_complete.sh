@@ -13,11 +13,11 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Skills目录（脚本所在目录的父目录）
-SKILLS_DIR="${SKILLS_DIR:-$SCRIPT_DIR/../..}"
-
 # 脚本目录
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Skills目录（脚本所在目录的父目录）
+SKILLS_DIR="${SKILLS_DIR:-$SCRIPT_DIR/../..}"
 CONFIG_DIR="$SCRIPT_DIR/../config"
 LOAD_ACCOUNTS_SCRIPT="$SCRIPT_DIR/load_accounts.sh"
 
