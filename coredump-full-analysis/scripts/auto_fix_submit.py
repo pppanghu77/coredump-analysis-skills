@@ -6,7 +6,7 @@
 2. 先检查 target branch 是否已包含已知修复提交
 3. 已修复则跳过，不重复提交
 4. 只有命中 package fixer 的模式才允许自动改代码
-5. 没有稳定 fixer 的“可修复”崩溃只记录为 manual_required
+5. 没有稳定 fixer 的"可修复"崩溃生成分析报告 commit（fallback），方便后续人工处理
 """
 
 import argparse
@@ -202,6 +202,193 @@ def push_to_gerrit(code_dir: Path, target_branch: str, reviewers: List[str]) -> 
     return result.returncode == 0
 
 
+def generate_analysis_report(
+    package: str,
+    version: str,
+    clusters_info: List[Dict],
+    target_branch: str,
+) -> str:
+    """生成 coredump 分析报告 markdown 内容。"""
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    lines = [
+        f"# Coredump Analysis Report",
+        f"",
+        f"- **Package**: `{package}`",
+        f"- **Version**: `{version}`",
+        f"- **Target Branch**: `{target_branch}`",
+        f"- **Generated**: {now}",
+        f"",
+        f"## Summary",
+        f"",
+        f"| # | Pattern | Count | Versions | Status |",
+        f"|---|---------|-------|----------|--------|",
+    ]
+    for i, info in enumerate(clusters_info, 1):
+        pattern = info.get("pattern", "unknown")
+        count = info.get("count", 0)
+        versions = info.get("versions", [])
+        status = info.get("status", "analysis_only")
+        versions_str = ", ".join(versions) if versions else "-"
+        lines.append(f"| {i} | `{pattern}` | {count} | {versions_str} | {status} |")
+
+    lines.append("")
+    lines.append("## Details")
+    lines.append("")
+
+    for i, info in enumerate(clusters_info, 1):
+        pattern = info.get("pattern", "unknown")
+        lines.append(f"### {i}. {pattern}")
+        lines.append("")
+        summary = info.get("summary", "")
+        if summary:
+            lines.append(summary)
+        stack = info.get("stack_snippet", "")
+        if stack:
+            lines.append(f"")
+            lines.append("**Stack snippet:**")
+            lines.append("```")
+            lines.append(stack)
+            lines.append("```")
+        root_cause = info.get("root_cause", "")
+        if root_cause:
+            lines.append(f"")
+            lines.append(f"**Root cause**: {root_cause}")
+        suggestion = info.get("suggestion", "")
+        if suggestion:
+            lines.append(f"")
+            lines.append(f"**Suggestion**: {suggestion}")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def generate_analysis_report_from_fixable(
+    package: str,
+    version: str,
+    fixable_crashes: List[Dict],
+    target_branch: str,
+) -> str:
+    """从 fixable_crashes 列表生成分析报告（spec-based 路径使用）。"""
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # 按 pattern_name 分组统计
+    pattern_groups: Dict[str, List[Dict]] = {}
+    for c in fixable_crashes:
+        pat = c.get("pattern_name") or "unknown"
+        pattern_groups.setdefault(pat, []).append(c)
+
+    lines = [
+        f"# Coredump Analysis Report",
+        f"",
+        f"- **Package**: `{package}`",
+        f"- **Version**: `{version}`",
+        f"- **Target Branch**: `{target_branch}`",
+        f"- **Generated**: {now}",
+        f"",
+        f"## Summary",
+        f"",
+        f"| # | Pattern | Count | Status |",
+        f"|---|---------|-------|--------|",
+    ]
+    clusters_info = []
+    for i, (pat, crashes) in enumerate(sorted(pattern_groups.items()), 1):
+        total = sum(c.get("count", 1) for c in crashes)
+        status = "manual_required"
+        lines.append(f"| {i} | `{pat}` | {total} | {status} |")
+        # 取第一个 crash 的堆栈作为代表
+        rep = crashes[0]
+        stack_lines = []
+        for frame in (rep.get("frames") or [])[:8]:
+            sym = frame.get("symbol") or ""
+            lib = frame.get("library") or ""
+            if sym:
+                stack_lines.append(f"  {sym}  ({lib})" if lib else f"  {sym}")
+        clusters_info.append({
+            "pattern": pat,
+            "count": total,
+            "versions": list({c.get("version", "") for c in crashes if c.get("version")}),
+            "status": "manual_required",
+            "summary": f"Total {total} crash records with pattern `{pat}`. "
+                       f"No auto fixer registered; manual review required.",
+            "stack_snippet": "\n".join(stack_lines) if stack_lines else "",
+            "root_cause": "",
+            "suggestion": "Implement a package-specific fixer or register an auto_fixer in the fix spec.",
+        })
+
+    lines.append("")
+    lines.append("## Details")
+    lines.append("")
+    for i, info in enumerate(clusters_info, 1):
+        pattern = info["pattern"]
+        lines.append(f"### {i}. {pattern}")
+        lines.append("")
+        lines.append(info["summary"])
+        if info["stack_snippet"]:
+            lines.append("")
+            lines.append("**Representative stack:**")
+            lines.append("```")
+            lines.append(info["stack_snippet"])
+            lines.append("```")
+        if info["suggestion"]:
+            lines.append("")
+            lines.append(f"**Suggestion**: {info['suggestion']}")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def submit_analysis_report_commit(
+    code_dir: Path,
+    package: str,
+    version: str,
+    target_branch: str,
+    reviewers: List[str],
+    report_content: str,
+    dry_run: bool,
+) -> Dict:
+    """在 code_dir 中生成分析报告文件，commit 并推送到 Gerrit。"""
+    report_filename = "coredump-analysis-report.md"
+    report_path = code_dir / report_filename
+    branch_name = build_fix_branch_name(package, clean_version(version))
+
+    result = {
+        "action": "submit_analysis_report",
+        "report_file": report_filename,
+        "branch_name": branch_name,
+        "commit_hash": None,
+        "submitted": False,
+    }
+
+    if dry_run:
+        result["submitted"] = True
+        result["dry_run"] = True
+        return result
+
+    checkout_target_branch(code_dir, target_branch, branch_name)
+    report_path.write_text(report_content, encoding="utf-8")
+    commit_msg = (
+        f"[coredump-analysis] {package} v{clean_version(version)}: "
+        f"add crash analysis report\n\n"
+        f"Auto-generated analysis report covering fixable crashes "
+        f"without registered auto fixer.\n\n"
+        f"Change-Id: I" + "0" * 40
+    )
+    commit_hash = create_commit(code_dir, commit_msg, [report_filename])
+    if commit_hash:
+        result["commit_hash"] = commit_hash
+        result["submitted"] = push_to_gerrit(
+            code_dir,
+            target_branch.replace("origin/", "", 1),
+            reviewers,
+        )
+    # 清理：checkout 后删掉报告文件以免影响后续操作
+    if report_path.exists():
+        report_path.unlink()
+    run_git(code_dir, ["checkout", target_branch.replace("origin/", "", 1)], check=False)
+
+    return result
+
+
 def build_cluster_commit_message(plan: FixPlan, cluster) -> str:
     representative = cluster.representative_crash
     log_line = representative.get("stack_info") or representative.get("app_layer_symbol") or cluster.title
@@ -296,6 +483,45 @@ def run_cluster_auto_fix(
     if result["commit_hashes"] and not dry_run:
         result["submitted"] = push_to_gerrit(code_dir, target_branch.replace("origin/", "", 1), reviewers)
 
+    # --- Fallback: 当所有 cluster 都是 analysis_only（没有代码修改），但有 fixable 崩溃时，
+    #     生成分析报告 commit 并推送到 Gerrit，确保分析结果被记录 ---
+    if not result["auto_fixed"] and result["analysis_only"]:
+        clusters_info = []
+        for cluster_entry in result["clusters"]:
+            cluster_data = cluster_entry.get("cluster", {})
+            plan_data = cluster_entry.get("plan", {})
+            fixable_count = cluster_data.get("fixable_count", cluster_data.get("total_count", 0))
+            if fixable_count == 0:
+                continue
+            # 提取堆栈摘要
+            representative = cluster_data.get("representative_crash", {})
+            stack_lines = []
+            for frame in (representative.get("frames") or [])[:8]:
+                sym = frame.get("symbol") or ""
+                lib = frame.get("library") or ""
+                if sym:
+                    stack_lines.append(f"  {sym}  ({lib})" if lib else f"  {sym}")
+            clusters_info.append({
+                "pattern": cluster_data.get("title", "unknown"),
+                "count": fixable_count,
+                "versions": cluster_data.get("versions", []),
+                "status": "analysis_only",
+                "summary": plan_data.get("root_cause", "") or f"Cluster with {fixable_count} fixable crashes, no code change applied.",
+                "stack_snippet": "\n".join(stack_lines) if stack_lines else "",
+                "root_cause": plan_data.get("root_cause", ""),
+                "suggestion": plan_data.get("fix_description", ""),
+            })
+
+        if clusters_info:
+            report_content = generate_analysis_report(
+                package, version, clusters_info, target_branch,
+            )
+            report_result = submit_analysis_report_commit(
+                code_dir, package, version, target_branch, reviewers,
+                report_content, dry_run,
+            )
+            result["analysis_report"] = report_result
+
     result_file.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
     return result
 
@@ -350,6 +576,10 @@ def main():
         print(f"自动修复簇: {len(cluster_result['auto_fixed'])}")
         print(f"仅记录分析簇: {len(cluster_result['analysis_only'])}")
         print(f"已提交 Gerrit: {cluster_result['submitted']}")
+        if cluster_result.get("analysis_report"):
+            print(f"分析报告已提交: {cluster_result['analysis_report'].get('submitted')}")
+            if cluster_result["analysis_report"].get("commit_hash"):
+                print(f"分析报告 commit: {cluster_result['analysis_report']['commit_hash']}")
         return 0
 
     specs = get_fix_specs(args.package)
@@ -468,6 +698,21 @@ def main():
                     args.reviewer,
                 )
 
+    # --- Fallback: 当没有自动修复提交，但有 manual_required 的 fixable 崩溃时，
+    #     生成分析报告 commit 并推送到 Gerrit，确保分析结果被记录 ---
+    if not result["auto_fixed"] and result["manual_required"] and fixable_crashes:
+        report_content = generate_analysis_report_from_fixable(
+            args.package, args.version, fixable_crashes, args.target_branch,
+        )
+        report_result = submit_analysis_report_commit(
+            code_dir, args.package, args.version,
+            args.target_branch, args.reviewer,
+            report_content, args.dry_run,
+        )
+        result["analysis_report"] = report_result
+        if report_result.get("submitted"):
+            result["submitted"] = True
+
     result_file.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
 
     print(f"自动修复结果已保存: {result_file}")
@@ -476,6 +721,10 @@ def main():
     print(f"自动修复应用: {len(result['auto_fixed'])}")
     print(f"仍需人工处理: {len(result['manual_required'])}")
     print(f"已提交 Gerrit: {result['submitted']}")
+    if result.get("analysis_report"):
+        print(f"分析报告已提交: {result['analysis_report'].get('submitted')}")
+        if result["analysis_report"].get("commit_hash"):
+            print(f"分析报告 commit: {result['analysis_report']['commit_hash']}")
 
     return 0
 
