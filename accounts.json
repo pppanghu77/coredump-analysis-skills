@@ -7,8 +7,8 @@
     "url": "https://shuttle.uniontech.com",
     "api_url": "https://shuttle.uniontech.com/api/download",
     "account": {
-      "username": "ut000168",
-      "password": "wubowen@123"
+      "username": "在此处输入shuttle账号",
+      "password": "在此处输入shuttle密码"
     }
   },
   "metabase": {
@@ -31,8 +31,8 @@
     "host": "gerrit.uniontech.com",
     "port": "29418",
     "account": {
-      "username": "ut000168",
-      "password": "wubowen@123"
+      "username": "在此处输入gerrit账号",
+      "password": "在此处输入gerrit密码"
     },
     "ssh_key": "~/.ssh/id_rsa"
   },
@@ -47,7 +47,7 @@
     "_comment": "必填：当前登录账户的 sudo 密码",
     "name": "系统配置",
     "description": "系统级配置",
-    "sudo_password": "wubowen@123"
+    "sudo_password": "在此处输入当前登录账户密码"
   },
   "paths": {
     "_comment": "可选：默认工作目录根路径。不填时默认使用用户家目录。",

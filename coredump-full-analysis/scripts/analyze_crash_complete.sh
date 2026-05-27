@@ -34,7 +34,7 @@ SELECTED_VERSIONS="${SELECTED_VERSIONS:-}"
 WORKSPACE="${WORKSPACE:-}"
 PROGRESS_INTERVAL="${PROGRESS_INTERVAL:-180}"  # 进度上报间隔（秒），0表示禁用
 MAX_CRASHES="${MAX_CRASHES:-0}"  # 单版本最大分析崩溃数，0表示分析全部
-ADDR2LINE_MAX_FRAMES="${ADDR2LINE_MAX_FRAMES:-100}"  # addr2line 最大解析帧数
+ADDR2LINE_MAX_FRAMES="${ADDR2LINE_MAX_FRAMES:-300}"  # addr2line 最大解析帧数
 AUTO_FIX_SUBMIT="${AUTO_FIX_SUBMIT:-false}"
 TARGET_BRANCH="${TARGET_BRANCH:-origin/develop/eagle}"
 REVIEWERS=()
@@ -198,7 +198,7 @@ ${GREEN}选项:${NC}
     --target-branch <br>  自动修复提交目标分支（默认: origin/develop/eagle）
     --reviewer <email>    自动提交时附加 reviewer，可多次指定
     --max-crashes <n>     单版本最大分析崩溃数（默认: 0，分析全部）
-    --addr2line-max-frames <n>  addr2line 最大解析帧数（默认: 100）
+    --addr2line-max-frames <n>  addr2line 最大解析帧数（默认: 300）
     --workspace <dir>      工作目录（默认: 自动创建带时间戳的目录 ~/coredump-workspace-YYYYMMDD-HHMMSS）
     --help, -h            显示此帮助信息
 

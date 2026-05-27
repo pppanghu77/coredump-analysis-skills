@@ -65,8 +65,8 @@ def parse_args():
     parser.add_argument(
         '--addr2line-max-frames',
         type=int,
-        default=100,
-        help='addr2line 最大解析帧数（默认: 100）'
+        default=300,
+        help='addr2line 最大解析帧数（默认: 300）'
     )
 
     return parser.parse_args()
@@ -567,7 +567,7 @@ def save_markdown_report(analysis: Dict, output_file: Path):
             f.write(f"- 可修复性提升: {estats.get('fixability_improved', 0)}\n")
             dstats = analysis.get('deep_dive_stats', {})
             if dstats:
-                f.write(f"- uncertain 二次深挖: {dstats.get('performed', 0)}\n")
+                f.write(f"- 自动二次深挖: {dstats.get('performed', 0)}\n")
                 f.write(f"- 深挖取得增益: {dstats.get('improved', 0)}\n")
             f.write("\n")
 
@@ -703,7 +703,7 @@ def save_markdown_report(analysis: Dict, output_file: Path):
 
                 deep_dive = enhanced.get('deep_dive', {})
                 if deep_dive.get('performed'):
-                    f.write("\n**uncertain 二次深挖**:\n")
+                    f.write("\n**自动二次深挖**:\n")
                     f.write(f"  - frame_limit: {deep_dive.get('frame_limit', 0)}\n")
                     f.write(f"  - improved: {deep_dive.get('improved', False)}\n")
 

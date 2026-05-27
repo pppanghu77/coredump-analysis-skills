@@ -927,11 +927,11 @@ class EnhancedAnalyzer:
 
     def __init__(self, workspace: str, package: str, version: str,
                  llm_config: Optional[Dict] = None,
-                 max_addr2line_frames: int = 100):
+                 max_addr2line_frames: int = 300):
         self.workspace = workspace
         self.package = package
         self.version = version
-        self.max_addr2line_frames = max(1, int(max_addr2line_frames or 100))
+        self.max_addr2line_frames = max(1, int(max_addr2line_frames or 300))
 
         ws_path = Path(workspace)
         source_dir = ws_path / '3.代码管理' / package
@@ -1002,8 +1002,9 @@ class EnhancedAnalyzer:
             degradation_reasons.append('git_analysis_unavailable')
 
         deep_dive = None
-        if crash.get('fixable') == 'uncertain':
-            deep_dive = self._run_uncertain_deep_dive(crash, frames, a2l)
+        deep_dive_reasons = self._get_deep_dive_reasons(crash)
+        if deep_dive_reasons:
+            deep_dive = self._run_targeted_deep_dive(crash, frames, a2l, deep_dive_reasons)
             if deep_dive.get('performed'):
                 result['deep_dive'] = deep_dive
                 deep_a2l = deep_dive.get('addr2line', [])
@@ -1023,7 +1024,7 @@ class EnhancedAnalyzer:
                     result['objdump'] = objdump_result
                 degradation_reasons.extend(deep_dive.get('degradation_reasons', []))
                 if deep_dive.get('performed') and not deep_dive.get('improved'):
-                    degradation_reasons.append('uncertain_deep_dive_no_gain')
+                    degradation_reasons.append('deep_dive_no_gain')
 
         # 5. debuginfod (if we have buildid)
         buildid = crash.get('buildid', '')
@@ -1151,7 +1152,34 @@ class EnhancedAnalyzer:
             unique.append(f)
         return unique
 
-    def _run_uncertain_deep_dive(self, crash: Dict, frames: List[Dict], base_a2l: List[Dict]) -> Dict:
+    def _has_app_layer_signal(self, crash: Dict) -> bool:
+        app_symbol = (crash.get('app_layer_symbol') or '').strip().lower()
+        if app_symbol and app_symbol not in {'n/a', 'unknown'}:
+            return True
+        key_frame = crash.get('key_frame') or {}
+        key_symbol = (key_frame.get('symbol') or '').strip().lower()
+        key_library = (key_frame.get('library') or '').strip().lower()
+        package_name = (self.package or '').strip().lower()
+        if key_symbol and key_symbol not in {'n/a', 'unknown'} and package_name and package_name in key_symbol:
+            return True
+        if key_library and package_name and package_name in key_library:
+            return True
+        return False
+
+    def _get_deep_dive_reasons(self, crash: Dict) -> List[str]:
+        reasons = []
+        if crash.get('fixable') == 'uncertain':
+            reasons.append('uncertain_fixability')
+        if self._has_app_layer_signal(crash):
+            reasons.append('app_layer_signal')
+        try:
+            if int(crash.get('count') or 0) >= 3:
+                reasons.append('high_frequency')
+        except (TypeError, ValueError):
+            pass
+        return reasons
+
+    def _run_targeted_deep_dive(self, crash: Dict, frames: List[Dict], base_a2l: List[Dict], reasons: List[str]) -> Dict:
         deep_limit = max(self.max_addr2line_frames * 2, 200)
         prioritized_frames = self._prioritize_frames_for_deep_dive(crash, frames)
         deep_a2l = self.addr2line.resolve_frames(prioritized_frames, max_frames=deep_limit)
@@ -1168,9 +1196,10 @@ class EnhancedAnalyzer:
         )
         degradation_reasons = []
         if not improved:
-            degradation_reasons.append('uncertain_deep_dive_exhausted')
+            degradation_reasons.append('deep_dive_exhausted')
         return {
             'performed': True,
+            'reasons': reasons,
             'frame_limit': deep_limit,
             'improved': improved,
             'addr2line': deep_a2l,
@@ -1292,7 +1321,7 @@ def run_enhanced_analysis_for_version(
     version: str,
     llm_config: Optional[Dict] = None,
     max_crashes: int = 0,
-    max_addr2line_frames: int = 100,
+    max_addr2line_frames: int = 300,
 ) -> Tuple[List[Dict], Dict]:
     """Run enhanced analysis on all crashes.
 
@@ -1337,11 +1366,14 @@ def run_enhanced_analysis_for_version(
             if any(g.get('blame', {}).get('available') or g.get('log', {}).get('available')
                    for g in enhanced.get('git_analysis', [])):
                 stats['git_available'] += 1
-            if enhanced.get('objdump', {}).get('available'):
+            objdump_info = enhanced.get('objdump') or {}
+            if objdump_info.get('available'):
                 stats['objdump_available'] += 1
-            if enhanced.get('llm_analysis', {}).get('available'):
+            llm_info = enhanced.get('llm_analysis') or {}
+            if llm_info.get('available'):
                 stats['llm_analyzed'] += 1
-            if enhanced.get('improved_fixability', {}).get('resolved'):
+            fixability_info = enhanced.get('improved_fixability') or {}
+            if fixability_info.get('resolved'):
                 stats['fixability_improved'] += 1
         except Exception as e:
             logger.warning(f"Enhanced analysis failed for crash: {e}")
