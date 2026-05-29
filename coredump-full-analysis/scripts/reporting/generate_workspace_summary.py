@@ -295,9 +295,12 @@ def classify_auto_fix_result(data):
     manual_required = data.get("manual_required") or []
     analysis_report = data.get("analysis_report") or {}
     submitted = bool(data.get("submitted"))
+    analysis_report_reason = analysis_report.get("reason") or ""
 
     if status == "skipped" and "source repository is not available" in reason:
         return "source_repo_missing"
+    if "target branch unavailable" in reason or "target branch unavailable" in analysis_report_reason:
+        return "target_branch_unavailable"
     if auto_fixed and submitted:
         return "code_fix_submitted"
     if auto_fixed:
@@ -358,6 +361,7 @@ def collect_auto_fix_overview(workspace, packages):
         "analysis_report_only": 0,
         "manual_required": 0,
         "source_repo_missing": 0,
+        "target_branch_unavailable": 0,
         "no_fix_output": 0,
         "target_missing_indicators": 0,
     })
@@ -517,11 +521,11 @@ def render_auto_fix_overview_md(overview):
     lines.extend(["", "## 按包汇总", ""])
     packages = overview.get("packages", [])
     if packages:
-        lines.append("| package | versions | fixable_versions | code_fix_submitted | code_fix_generated | analysis_report_submitted | analysis_report_only | manual_required | source_repo_missing | target_missing_indicators |")
-        lines.append("|---------|----------|------------------|--------------------|--------------------|---------------------------|----------------------|----------------|---------------------|---------------------------|")
+        lines.append("| package | versions | fixable_versions | code_fix_submitted | code_fix_generated | analysis_report_submitted | analysis_report_only | manual_required | source_repo_missing | target_branch_unavailable | target_missing_indicators |")
+        lines.append("|---------|----------|------------------|--------------------|--------------------|---------------------------|----------------------|----------------|---------------------|---------------------------|---------------------------|")
         for item in packages:
             lines.append(
-                f"| {item['package']} | {item['versions']} | {item['fixable_versions']} | {item['code_fix_submitted']} | {item['code_fix_generated']} | {item['analysis_report_submitted']} | {item['analysis_report_only']} | {item['manual_required']} | {item['source_repo_missing']} | {item['target_missing_indicators']} |"
+                f"| {item['package']} | {item['versions']} | {item['fixable_versions']} | {item['code_fix_submitted']} | {item['code_fix_generated']} | {item['analysis_report_submitted']} | {item['analysis_report_only']} | {item['manual_required']} | {item['source_repo_missing']} | {item['target_branch_unavailable']} | {item['target_missing_indicators']} |"
             )
     else:
         lines.append("无")
@@ -565,6 +569,16 @@ def load_expected_versions(workspace, package):
     return versions
 
 
+def load_auto_fix_category_for_version(workspace, package, version):
+    version_dir = clean_version_label(version).replace('.', '_').replace('+', '_').replace('-', '_')
+    base = workspace / "5.崩溃分析" / package / f"version_{version_dir}"
+    for result_file in (base / "auto_fix_clusters_result.json", base / "auto_fix_result.json"):
+        if result_file.exists():
+            data = read_json(result_file) or {}
+            return classify_auto_fix_result(data), data
+    return None, None
+
+
 def build_retry_targets(workspace, manifest, version_statuses, run_context):
     retry_package_statuses = {"failed", "partial", "running", "pending"}
     retry_packages = []
@@ -589,6 +603,7 @@ def build_retry_targets(workspace, manifest, version_statuses, run_context):
             failed_steps = [e["step"] for e in version_events if e["status"] not in ("ok", "skipped_no_sudo")]
             last_message = version_events[-1]["message"] if version_events else "no execution record"
             needs_retry = False
+            auto_fix_category, auto_fix_data = load_auto_fix_category_for_version(workspace, package, version)
 
             if not version_events:
                 needs_retry = True
@@ -597,7 +612,14 @@ def build_retry_targets(workspace, manifest, version_statuses, run_context):
                 needs_retry = True
             elif step_status.get("source", "").startswith("failed"):
                 needs_retry = True
-            elif any(status.startswith("failed") for status in step_status.values()):
+            elif any(
+                status.startswith("failed")
+                for step, status in step_status.items()
+                if not (
+                    step == "autofix"
+                    and auto_fix_category in {"target_branch_unavailable", "analysis_report_submitted", "analysis_report_only", "manual_required", "source_repo_missing", "no_fix_output"}
+                )
+            ):
                 needs_retry = True
 
             if needs_retry:
@@ -612,6 +634,8 @@ def build_retry_targets(workspace, manifest, version_statuses, run_context):
                     "command": build_retry_command(package, workspace, run_context, version),
                     "retry_strategy": retry_strategy,
                     "step_command": step_retry_command,
+                    "auto_fix_category": auto_fix_category,
+                    "auto_fix_reason": (auto_fix_data or {}).get("reason") or ((auto_fix_data or {}).get("analysis_report") or {}).get("reason"),
                 })
 
     retry_packages = sorted(set(retry_packages))
