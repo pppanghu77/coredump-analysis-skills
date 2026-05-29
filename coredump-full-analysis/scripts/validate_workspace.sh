@@ -84,14 +84,14 @@ fi
 mkdir -p "$SUMMARY_DIR"
 
 echo "== 刷新汇总 =="
-python3 "$SCRIPT_DIR/generate_workspace_summary.py" \
+python3 "$SCRIPT_DIR/reporting/generate_workspace_summary.py" \
     --workspace "$WORKSPACE" \
     --packages "$PACKAGES" \
     --date-range-label "$DATE_RANGE_LABEL"
 
 echo
 echo "== 闭环校验 =="
-VALIDATION_OUTPUT=$(python3 "$SCRIPT_DIR/validate_workspace_retry_closure.py" --workspace "$WORKSPACE" 2>&1)
+VALIDATION_OUTPUT=$(python3 "$SCRIPT_DIR/validation/validate_workspace_retry_closure.py" --workspace "$WORKSPACE" 2>&1)
 VALIDATION_EXIT=$?
 printf '%s\n' "$VALIDATION_OUTPUT"
 

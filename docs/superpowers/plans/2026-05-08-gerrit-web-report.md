@@ -16,7 +16,7 @@ The approved spec covers one cohesive feature: generate and view a local Gerrit 
 
 ## File Structure
 
-- Create: `coredump-full-analysis/scripts/generate_gerrit_web_report.py`
+- Create: `coredump-full-analysis/scripts/reporting/generate_gerrit_web_report.py`
   - CLI entry point.
   - Defines `GerritFixRecord` and `ReportWarning` dataclasses.
   - Scans workspace result files.
@@ -53,7 +53,7 @@ Do not commit during implementation unless the user explicitly authorizes commit
 
 **Files:**
 - Create: `tests/coredump_full_analysis/test_generate_gerrit_web_report.py`
-- Future implementation target: `coredump-full-analysis/scripts/generate_gerrit_web_report.py`
+- Future implementation target: `coredump-full-analysis/scripts/reporting/generate_gerrit_web_report.py`
 
 - [ ] **Step 1: Create the test file with failing collector tests**
 
@@ -244,12 +244,12 @@ git commit -m "test: add Gerrit web report collection tests"
 ### Task 2: Implement data model, JSON loading, record collection, and merging
 
 **Files:**
-- Create: `coredump-full-analysis/scripts/generate_gerrit_web_report.py`
+- Create: `coredump-full-analysis/scripts/reporting/generate_gerrit_web_report.py`
 - Test: `tests/coredump_full_analysis/test_generate_gerrit_web_report.py`
 
 - [ ] **Step 1: Create the initial script with collection logic**
 
-Create `coredump-full-analysis/scripts/generate_gerrit_web_report.py` with this content:
+Create `coredump-full-analysis/scripts/reporting/generate_gerrit_web_report.py` with this content:
 
 ```python
 #!/usr/bin/env python3
@@ -514,7 +514,7 @@ Expected: PASS for the five collection tests.
 Only run this if the user has explicitly authorized commits for this implementation session:
 
 ```bash
-git add coredump-full-analysis/scripts/generate_gerrit_web_report.py tests/coredump_full_analysis/test_generate_gerrit_web_report.py
+git add coredump-full-analysis/scripts/reporting/generate_gerrit_web_report.py tests/coredump_full_analysis/test_generate_gerrit_web_report.py
 git commit -m "feat: collect Gerrit web report records"
 ```
 
@@ -523,7 +523,7 @@ git commit -m "feat: collect Gerrit web report records"
 ### Task 3: Add report payload, safe page rendering, data output, and CLI generation
 
 **Files:**
-- Modify: `coredump-full-analysis/scripts/generate_gerrit_web_report.py`
+- Modify: `coredump-full-analysis/scripts/reporting/generate_gerrit_web_report.py`
 - Modify: `tests/coredump_full_analysis/test_generate_gerrit_web_report.py`
 
 - [ ] **Step 1: Add failing tests for output files and empty reports**
@@ -582,7 +582,7 @@ Expected: FAIL with `AttributeError: module 'generate_gerrit_web_report' has no 
 
 - [ ] **Step 3: Add payload, summary, page, and CLI functions**
 
-Append this code to `coredump-full-analysis/scripts/generate_gerrit_web_report.py` after `collect_workspace_records()`:
+Append this code to `coredump-full-analysis/scripts/reporting/generate_gerrit_web_report.py` after `collect_workspace_records()`:
 
 ```python
 
@@ -959,7 +959,7 @@ Expected: PASS for all seven tests.
 Run:
 
 ```bash
-tmp_workspace=$(mktemp -d) && python3 coredump-full-analysis/scripts/generate_gerrit_web_report.py --workspace "$tmp_workspace" --no-gerrit-enrich && test -f "$tmp_workspace/6.总结报告/gerrit-web-report/index.html" && test -f "$tmp_workspace/6.总结报告/gerrit-web-report/data.json"
+tmp_workspace=$(mktemp -d) && python3 coredump-full-analysis/scripts/reporting/generate_gerrit_web_report.py --workspace "$tmp_workspace" --no-gerrit-enrich && test -f "$tmp_workspace/6.总结报告/gerrit-web-report/index.html" && test -f "$tmp_workspace/6.总结报告/gerrit-web-report/data.json"
 ```
 
 Expected: PASS with output containing `Gerrit Web Report 已生成:`.
@@ -969,7 +969,7 @@ Expected: PASS with output containing `Gerrit Web Report 已生成:`.
 Only run this if the user has explicitly authorized commits for this implementation session:
 
 ```bash
-git add coredump-full-analysis/scripts/generate_gerrit_web_report.py tests/coredump_full_analysis/test_generate_gerrit_web_report.py
+git add coredump-full-analysis/scripts/reporting/generate_gerrit_web_report.py tests/coredump_full_analysis/test_generate_gerrit_web_report.py
 git commit -m "feat: generate Gerrit web report files"
 ```
 
@@ -978,7 +978,7 @@ git commit -m "feat: generate Gerrit web report files"
 ### Task 4: Add optional local service behavior and tests
 
 **Files:**
-- Modify: `coredump-full-analysis/scripts/generate_gerrit_web_report.py`
+- Modify: `coredump-full-analysis/scripts/reporting/generate_gerrit_web_report.py`
 - Modify: `tests/coredump_full_analysis/test_generate_gerrit_web_report.py`
 
 - [ ] **Step 1: Add failing port-check test**
@@ -1007,7 +1007,7 @@ Expected: FAIL with `AttributeError` for `port_available`.
 
 - [ ] **Step 3: Add service helpers**
 
-Insert this code before `parse_args()` in `coredump-full-analysis/scripts/generate_gerrit_web_report.py`:
+Insert this code before `parse_args()` in `coredump-full-analysis/scripts/reporting/generate_gerrit_web_report.py`:
 
 ```python
 
@@ -1073,7 +1073,7 @@ Expected: PASS for all eight tests.
 Only run this if the user has explicitly authorized commits for this implementation session:
 
 ```bash
-git add coredump-full-analysis/scripts/generate_gerrit_web_report.py tests/coredump_full_analysis/test_generate_gerrit_web_report.py
+git add coredump-full-analysis/scripts/reporting/generate_gerrit_web_report.py tests/coredump_full_analysis/test_generate_gerrit_web_report.py
 git commit -m "feat: serve Gerrit web report locally"
 ```
 
@@ -1157,7 +1157,7 @@ generate_gerrit_web_report() {
         return 0
     fi
 
-    local report_script="$SKILLS_DIR/coredump-full-analysis/scripts/generate_gerrit_web_report.py"
+    local report_script="$SKILLS_DIR/coredump-full-analysis/scripts/reporting/generate_gerrit_web_report.py"
     if [[ ! -f "$report_script" ]]; then
         echo -e "${YELLOW}⚠️ 未找到 Gerrit 网页报告脚本: $report_script${NC}"
         return 0
@@ -1294,14 +1294,14 @@ In `SKILL.md`, add this section after the Agent usage section:
 手动重新生成：
 
 ```bash
-python3 coredump-full-analysis/scripts/generate_gerrit_web_report.py \
+python3 coredump-full-analysis/scripts/reporting/generate_gerrit_web_report.py \
   --workspace /path/to/coredump-workspace
 ```
 
 离线生成，不查询 Gerrit：
 
 ```bash
-python3 coredump-full-analysis/scripts/generate_gerrit_web_report.py \
+python3 coredump-full-analysis/scripts/reporting/generate_gerrit_web_report.py \
   --workspace /path/to/coredump-workspace \
   --no-gerrit-enrich
 ```
@@ -1332,14 +1332,14 @@ In `coredump-full-analysis/SKILL.md`, after the “输出文件” section, add:
 手动生成：
 
 ```bash
-python3 coredump-full-analysis/scripts/generate_gerrit_web_report.py \
+python3 coredump-full-analysis/scripts/reporting/generate_gerrit_web_report.py \
   --workspace /path/to/coredump-workspace
 ```
 
 只使用本地记录、不查询 Gerrit：
 
 ```bash
-python3 coredump-full-analysis/scripts/generate_gerrit_web_report.py \
+python3 coredump-full-analysis/scripts/reporting/generate_gerrit_web_report.py \
   --workspace /path/to/coredump-workspace \
   --no-gerrit-enrich
 ```
@@ -1347,7 +1347,7 @@ python3 coredump-full-analysis/scripts/generate_gerrit_web_report.py \
 生成后启动本地服务：
 
 ```bash
-python3 coredump-full-analysis/scripts/generate_gerrit_web_report.py \
+python3 coredump-full-analysis/scripts/reporting/generate_gerrit_web_report.py \
   --workspace /path/to/coredump-workspace \
   --serve
 ```
@@ -1384,7 +1384,7 @@ git commit -m "docs: document Gerrit web report"
 ### Task 7: End-to-end verification
 
 **Files:**
-- Verify: `coredump-full-analysis/scripts/generate_gerrit_web_report.py`
+- Verify: `coredump-full-analysis/scripts/reporting/generate_gerrit_web_report.py`
 - Verify: `tests/coredump_full_analysis/test_generate_gerrit_web_report.py`
 - Verify: `run_analysis_agent.sh`
 - Verify: `SKILL.md`
@@ -1420,7 +1420,7 @@ mkdir -p "$tmp_workspace/5.崩溃分析/gerrit"
 mkdir -p "$tmp_workspace/5.崩溃分析/dde-dock/version_1_2_3"
 printf '%s\n' '{"commit_hash":"abc123def456","branch":"auto-fix/dde-dock/v1_2_3","target_branch":"develop/eagle","package":"dde-dock","version":"1.2.3","reviewers":["reviewer@example.com"],"time":"2026-05-08T10:00:00+08:00","status":"submitted"}' > "$tmp_workspace/5.崩溃分析/gerrit/commit_abc123def456.json"
 printf '%s\n' '{"package":"dde-dock","version":"1.2.3","target_branch":"origin/develop/eagle","submitted":true,"commit_hashes":["abc123def456"],"auto_fixed":[{"description":"修复空指针崩溃","files_changed":["src/fix.cpp"]}],"clusters":[{"cluster":{"title":"QScreen geometry crash","signal":"SIGSEGV","count":12}}]}' > "$tmp_workspace/5.崩溃分析/dde-dock/version_1_2_3/auto_fix_clusters_result.json"
-python3 coredump-full-analysis/scripts/generate_gerrit_web_report.py --workspace "$tmp_workspace" --no-gerrit-enrich
+python3 coredump-full-analysis/scripts/reporting/generate_gerrit_web_report.py --workspace "$tmp_workspace" --no-gerrit-enrich
 ```
 
 Expected: output contains `Gerrit Web Report 已生成:`.
@@ -1444,7 +1444,7 @@ Expected: all commands exit 0.
 Run:
 
 ```bash
-python3 coredump-full-analysis/scripts/generate_gerrit_web_report.py --workspace /tmp/not-a-coredump-workspace-should-not-exist --no-gerrit-enrich
+python3 coredump-full-analysis/scripts/reporting/generate_gerrit_web_report.py --workspace /tmp/not-a-coredump-workspace-should-not-exist --no-gerrit-enrich
 ```
 
 Expected: exit code 2 and stderr contains `workspace 不存在:`.
@@ -1468,7 +1468,7 @@ with TemporaryDirectory() as tmp:
         port = sock.getsockname()[1]
         result = subprocess.run([
             sys.executable,
-            'coredump-full-analysis/scripts/generate_gerrit_web_report.py',
+            'coredump-full-analysis/scripts/reporting/generate_gerrit_web_report.py',
             '--workspace', str(workspace),
             '--no-gerrit-enrich',
             '--serve',
@@ -1495,7 +1495,7 @@ Expected: output may include pre-existing `M accounts.json`; do not stage `accou
 M SKILL.md
 M coredump-full-analysis/SKILL.md
 M run_analysis_agent.sh
-?? coredump-full-analysis/scripts/generate_gerrit_web_report.py
+?? coredump-full-analysis/scripts/reporting/generate_gerrit_web_report.py
 ?? tests/
 ```
 
@@ -1504,7 +1504,7 @@ M run_analysis_agent.sh
 Only run this if the user has explicitly authorized commits for this implementation session and previous checkpoints were not committed:
 
 ```bash
-git add SKILL.md coredump-full-analysis/SKILL.md run_analysis_agent.sh coredump-full-analysis/scripts/generate_gerrit_web_report.py tests/coredump_full_analysis/test_generate_gerrit_web_report.py
+git add SKILL.md coredump-full-analysis/SKILL.md run_analysis_agent.sh coredump-full-analysis/scripts/reporting/generate_gerrit_web_report.py tests/coredump_full_analysis/test_generate_gerrit_web_report.py
 git commit -m "feat: add Gerrit web report"
 ```
 

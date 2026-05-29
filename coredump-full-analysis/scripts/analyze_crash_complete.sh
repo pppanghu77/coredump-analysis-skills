@@ -1127,8 +1127,8 @@ main() {
         echo ""
         echo -e "${YELLOW}━━━ 步骤6: 生成完整分析报告 ━━━${NC}"
 
-        local full_report_script="$SKILLS_DIR/coredump-full-analysis/scripts/generate_full_report.py"
-        local ai_report_script="$SKILLS_DIR/coredump-full-analysis/scripts/generate_ai_report.py"
+        local full_report_script="$SKILLS_DIR/coredump-full-analysis/scripts/reporting/generate_full_report.py"
+        local ai_report_script="$SKILLS_DIR/coredump-full-analysis/scripts/reporting/generate_ai_report.py"
 
         if [[ -f "$full_report_script" ]]; then
             python3 "$full_report_script" \
@@ -1167,7 +1167,7 @@ main() {
             echo -e "${GREEN}✅ 版本清单已生成: $version_list_txt${NC}"
         fi
 
-        local final_report_script="$SKILLS_DIR/coredump-full-analysis/scripts/generate_final_report.py"
+        local final_report_script="$SKILLS_DIR/coredump-full-analysis/scripts/reporting/generate_final_report.py"
         if [[ -f "$final_report_script" ]]; then
             mkdir -p "$WORKSPACE/$SUMMARY_DIR_NAME"
             python3 "$final_report_script" \

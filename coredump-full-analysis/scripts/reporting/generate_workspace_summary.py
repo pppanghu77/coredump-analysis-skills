@@ -381,7 +381,7 @@ def build_retry_command(package, workspace, run_context, version=None):
 
 def build_retry_step_command(package, version, workspace, run_context, strategy):
     parts = [
-        "bash coredump-full-analysis/scripts/run_retry_step.sh",
+        "bash coredump-full-analysis/scripts/validation/run_retry_step.sh",
         f"--package {package}",
         f"--version {version}",
         f"--workspace {workspace}",
@@ -575,7 +575,7 @@ def write_retry_commands(path, workspace, retry_packages, run_context):
     if retry_packages:
         lines.extend([
             "\n# 校验包级重跑结果\n",
-            "python3 coredump-full-analysis/scripts/verify_retry_targets.py \\\n",
+            "python3 coredump-full-analysis/scripts/validation/verify_retry_targets.py \\\n",
             "  --summary-dir \"$SUMMARY_DIR\" \\\n",
             f"  --packages {json.dumps(','.join(retry_packages), ensure_ascii=False)}\n",
         ])
@@ -604,7 +604,7 @@ def write_retry_version_commands(path, workspace, retry_versions, run_context):
     if retry_versions:
         lines.extend([
             "\n# 校验版本级重跑结果\n",
-            "python3 coredump-full-analysis/scripts/verify_retry_targets.py \\\n",
+            "python3 coredump-full-analysis/scripts/validation/verify_retry_targets.py \\\n",
             "  --summary-dir \"$SUMMARY_DIR\" \\\n",
             "  --versions-file \"$TARGET_VERSIONS_FILE\"\n",
         ])
@@ -637,7 +637,7 @@ def write_retry_failed_step_commands(path, workspace, retry_versions, run_contex
     if retry_versions:
         lines.extend([
             "\n# 校验失败步骤重跑结果\n",
-            "python3 coredump-full-analysis/scripts/verify_retry_targets.py \\\n",
+            "python3 coredump-full-analysis/scripts/validation/verify_retry_targets.py \\\n",
             "  --summary-dir \"$SUMMARY_DIR\" \\\n",
             "  --versions-file \"$TARGET_VERSIONS_FILE\"\n",
         ])
@@ -652,7 +652,7 @@ def build_summary_refresh_block(run_context):
     date_range_arg = json.dumps(date_range_label, ensure_ascii=False)
     return [
         "\n# 刷新 workspace 汇总\n",
-        "python3 coredump-full-analysis/scripts/generate_workspace_summary.py \\\n",
+        "python3 coredump-full-analysis/scripts/reporting/generate_workspace_summary.py \\\n",
         "  --workspace \"$WORKSPACE\" \\\n",
         f"  --packages {packages_arg} \\\n",
         f"  --date-range-label {date_range_arg}\n",

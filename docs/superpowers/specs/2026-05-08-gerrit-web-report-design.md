@@ -198,13 +198,13 @@ Gerrit 补全字段：
 新增脚本：
 
 ```text
-coredump-full-analysis/scripts/generate_gerrit_web_report.py
+coredump-full-analysis/scripts/reporting/generate_gerrit_web_report.py
 ```
 
 推荐用法：
 
 ```bash
-python3 coredump-full-analysis/scripts/generate_gerrit_web_report.py \
+python3 coredump-full-analysis/scripts/reporting/generate_gerrit_web_report.py \
   --workspace /path/to/coredump-workspace
 ```
 
@@ -302,7 +302,7 @@ tmp-workspace/
 ### CLI 验证
 
 ```bash
-python3 coredump-full-analysis/scripts/generate_gerrit_web_report.py \
+python3 coredump-full-analysis/scripts/reporting/generate_gerrit_web_report.py \
   --workspace /tmp/tmp-workspace \
   --no-gerrit-enrich
 ```
@@ -317,7 +317,7 @@ python3 coredump-full-analysis/scripts/generate_gerrit_web_report.py \
 ### 本地服务验证
 
 ```bash
-python3 coredump-full-analysis/scripts/generate_gerrit_web_report.py \
+python3 coredump-full-analysis/scripts/reporting/generate_gerrit_web_report.py \
   --workspace /tmp/tmp-workspace \
   --no-gerrit-enrich \
   --serve \

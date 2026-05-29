@@ -5,8 +5,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SUMMARY_SCRIPT = REPO_ROOT / 'coredump-full-analysis' / 'scripts' / 'generate_workspace_summary.py'
-VERIFY_SCRIPT = REPO_ROOT / 'coredump-full-analysis' / 'scripts' / 'verify_retry_targets.py'
+SUMMARY_SCRIPT = REPO_ROOT / 'coredump-full-analysis' / 'scripts' / 'reporting' / 'generate_workspace_summary.py'
+VERIFY_SCRIPT = REPO_ROOT / 'coredump-full-analysis' / 'scripts' / 'validation' / 'verify_retry_targets.py'
 SUMMARY_DIR_NAME = '6.总结报告'
 
 

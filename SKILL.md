@@ -160,14 +160,14 @@ bash run_analysis_agent.sh --help
 手动重新生成：
 
 ```bash
-python3 coredump-full-analysis/scripts/generate_gerrit_web_report.py \
+python3 coredump-full-analysis/scripts/reporting/generate_gerrit_web_report.py \
   --workspace /path/to/coredump-workspace
 ```
 
 离线生成，不查询 Gerrit：
 
 ```bash
-python3 coredump-full-analysis/scripts/generate_gerrit_web_report.py \
+python3 coredump-full-analysis/scripts/reporting/generate_gerrit_web_report.py \
   --workspace /path/to/coredump-workspace \
   --no-gerrit-enrich
 ```

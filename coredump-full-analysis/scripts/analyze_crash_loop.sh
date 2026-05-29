@@ -278,8 +278,8 @@ phase1_prepare() {
 
     # 1.3 生成版本清单
     print_step "1.3" "生成版本清单..."
-    if [[ -f "$SCRIPT_DIR/generate_version_list.py" ]]; then
-        cp "$SCRIPT_DIR/generate_version_list.py" "$WORKSPACE/2.数据筛选/"
+    if [[ -f "$SCRIPT_DIR/reporting/generate_version_list.py" ]]; then
+        cp "$SCRIPT_DIR/reporting/generate_version_list.py" "$WORKSPACE/2.数据筛选/"
         chmod +x "$WORKSPACE/2.数据筛选/generate_version_list.py"
         cd "$WORKSPACE/2.数据筛选"
         python3 generate_version_list.py \
@@ -386,8 +386,8 @@ phase2_loop_analyze() {
         cp "$SCRIPT_DIR/submit_to_gerrit.sh" "$WORKSPACE/"
         chmod +x "$WORKSPACE/submit_to_gerrit.sh"
     fi
-    if [[ -f "$SCRIPT_DIR/generate_issue_doc.py" ]]; then
-        cp "$SCRIPT_DIR/generate_issue_doc.py" "$WORKSPACE/"
+    if [[ -f "$SCRIPT_DIR/reporting/generate_issue_doc.py" ]]; then
+        cp "$SCRIPT_DIR/reporting/generate_issue_doc.py" "$WORKSPACE/"
         chmod +x "$WORKSPACE/generate_issue_doc.py"
     fi
     if [[ -f "$SCRIPT_DIR/create_patch.sh" ]]; then
@@ -465,8 +465,8 @@ phase2_loop_analyze() {
 phase3_generate_report() {
     print_phase "3" "生成最终报告"
 
-    if [[ -f "$SCRIPT_DIR/generate_final_report.py" ]]; then
-        cp "$SCRIPT_DIR/generate_final_report.py" "$WORKSPACE/"
+    if [[ -f "$SCRIPT_DIR/reporting/generate_final_report.py" ]]; then
+        cp "$SCRIPT_DIR/reporting/generate_final_report.py" "$WORKSPACE/"
         chmod +x "$WORKSPACE/generate_final_report.py"
 
         cd "$WORKSPACE"

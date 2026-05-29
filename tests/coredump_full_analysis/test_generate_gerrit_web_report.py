@@ -5,7 +5,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SCRIPT_PATH = REPO_ROOT / "coredump-full-analysis" / "scripts" / "generate_gerrit_web_report.py"
+SCRIPT_PATH = REPO_ROOT / "coredump-full-analysis" / "scripts" / "reporting" / "generate_gerrit_web_report.py"
 
 spec = importlib.util.spec_from_file_location("generate_gerrit_web_report", SCRIPT_PATH)
 gerrit_report = importlib.util.module_from_spec(spec)

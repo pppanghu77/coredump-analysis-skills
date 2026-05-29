@@ -561,7 +561,7 @@ log_package_status() {
 
 generate_workspace_reports() {
     local failed_csv="$1"
-    local summary_script="$SKILLS_DIR/coredump-full-analysis/scripts/generate_workspace_summary.py"
+    local summary_script="$SKILLS_DIR/coredump-full-analysis/scripts/reporting/generate_workspace_summary.py"
     if [[ ! -f "$summary_script" ]]; then
         echo -e "${YELLOW}⚠️ 未找到 workspace 汇总脚本: $summary_script${NC}"
         return 0
@@ -588,7 +588,7 @@ generate_gerrit_web_report() {
         return 0
     fi
 
-    local report_script="$SKILLS_DIR/coredump-full-analysis/scripts/generate_gerrit_web_report.py"
+    local report_script="$SKILLS_DIR/coredump-full-analysis/scripts/reporting/generate_gerrit_web_report.py"
     if [[ ! -f "$report_script" ]]; then
         echo -e "${YELLOW}⚠️ 未找到 Gerrit 网页报告脚本: $report_script${NC}"
         return 0
@@ -777,7 +777,7 @@ elif [[ "$PROGRESS_INTERVAL" -gt 0 ]]; then
     echo "  重跑脚本: $WORKSPACE/$SUMMARY_DIR_NAME/retry_commands.sh"
     echo "  版本重跑脚本: $WORKSPACE/$SUMMARY_DIR_NAME/retry_versions.sh"
     echo "  失败步骤重跑脚本: $WORKSPACE/$SUMMARY_DIR_NAME/retry_failed_steps.sh"
-    echo "  闭环校验: python3 coredump-full-analysis/scripts/validate_workspace_retry_closure.py --workspace $WORKSPACE"
+    echo "  闭环校验: python3 coredump-full-analysis/scripts/validation/validate_workspace_retry_closure.py --workspace $WORKSPACE"
     echo "  一键验收: bash coredump-full-analysis/scripts/validate_workspace.sh --workspace $WORKSPACE"
     echo "  验收报告: $WORKSPACE/$SUMMARY_DIR_NAME/acceptance_report.txt"
     echo "  验收状态: $WORKSPACE/$SUMMARY_DIR_NAME/acceptance_status.json"
@@ -833,7 +833,7 @@ else
         echo "重跑脚本: $WORKSPACE/$SUMMARY_DIR_NAME/retry_commands.sh"
         echo "版本重跑脚本: $WORKSPACE/$SUMMARY_DIR_NAME/retry_versions.sh"
         echo "失败步骤重跑脚本: $WORKSPACE/$SUMMARY_DIR_NAME/retry_failed_steps.sh"
-        echo "闭环校验: python3 coredump-full-analysis/scripts/validate_workspace_retry_closure.py --workspace $WORKSPACE"
+        echo "闭环校验: python3 coredump-full-analysis/scripts/validation/validate_workspace_retry_closure.py --workspace $WORKSPACE"
         echo "一键验收: bash coredump-full-analysis/scripts/validate_workspace.sh --workspace $WORKSPACE"
         echo "验收报告: $WORKSPACE/$SUMMARY_DIR_NAME/acceptance_report.txt"
         echo "验收状态: $WORKSPACE/$SUMMARY_DIR_NAME/acceptance_status.json"

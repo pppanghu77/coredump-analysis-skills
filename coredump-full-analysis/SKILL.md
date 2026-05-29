@@ -182,14 +182,14 @@ bash coredump-full-analysis/scripts/analyze_crash_complete.sh \
 手动生成：
 
 ```bash
-python3 coredump-full-analysis/scripts/generate_gerrit_web_report.py \
+python3 coredump-full-analysis/scripts/reporting/generate_gerrit_web_report.py \
   --workspace /path/to/coredump-workspace
 ```
 
 只使用本地记录、不查询 Gerrit：
 
 ```bash
-python3 coredump-full-analysis/scripts/generate_gerrit_web_report.py \
+python3 coredump-full-analysis/scripts/reporting/generate_gerrit_web_report.py \
   --workspace /path/to/coredump-workspace \
   --no-gerrit-enrich
 ```
@@ -198,11 +198,11 @@ python3 coredump-full-analysis/scripts/generate_gerrit_web_report.py \
 
 ```bash
 # 默认会自动读取 coredump-full-analysis/config/manual_gerrit_changes.txt
-python3 coredump-full-analysis/scripts/generate_gerrit_web_report.py \
+python3 coredump-full-analysis/scripts/reporting/generate_gerrit_web_report.py \
   --workspace /path/to/coredump-workspace
 
 # 也可以额外指定一个或多个清单文件
-python3 coredump-full-analysis/scripts/generate_gerrit_web_report.py \
+python3 coredump-full-analysis/scripts/reporting/generate_gerrit_web_report.py \
   --workspace /path/to/coredump-workspace \
   --manual-change-file /path/to/manual_changes.txt \
   --manual-change-url https://gerrit.uniontech.com/c/dde-dock/+/340629
@@ -219,7 +219,7 @@ https://gerrit.uniontech.com/c/dde-launcher/+/340716
 生成后启动本地服务：
 
 ```bash
-python3 coredump-full-analysis/scripts/generate_gerrit_web_report.py \
+python3 coredump-full-analysis/scripts/reporting/generate_gerrit_web_report.py \
   --workspace /path/to/coredump-workspace \
   --serve
 ```

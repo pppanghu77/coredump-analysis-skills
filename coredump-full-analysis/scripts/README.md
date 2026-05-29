@@ -53,13 +53,13 @@ auto-fix（INTERNAL — 不建议直接调用）
 
 | 脚本 | 用途 |
 |------|------|
-| `generate_workspace_summary.py` | workspace 汇总：run_manifest/retry_summary/root_cause_clusters |
-| `generate_gerrit_web_report.py` | Gerrit web HTML 报告 |
-| `generate_version_list.py` | 从 crash_statistics.json 生成 version_list.txt |
-| `generate_full_report.py` | 生成 full_analysis_report.md |
-| `generate_final_report.py` | 汇总所有版本分析结果，生成最终结论报告 |
-| `generate_ai_report.py` | 生成 AI_analysis_report.md |
-| `generate_issue_doc.py` | 为不可修复崩溃生成详细问题文档 |
+| `reporting/generate_workspace_summary.py` | workspace 汇总：run_manifest/retry_summary/root_cause_clusters |
+| `reporting/generate_gerrit_web_report.py` | Gerrit web HTML 报告 |
+| `reporting/generate_version_list.py` | 从 crash_statistics.json 生成 version_list.txt |
+| `reporting/generate_full_report.py` | 生成 full_analysis_report.md |
+| `reporting/generate_final_report.py` | 汇总所有版本分析结果，生成最终结论报告 |
+| `reporting/generate_ai_report.py` | 生成 AI_analysis_report.md |
+| `reporting/generate_issue_doc.py` | 为不可修复崩溃生成详细问题文档 |
 
 校验/验收（VALIDATION TOOLING）
 
@@ -67,9 +67,9 @@ auto-fix（INTERNAL — 不建议直接调用）
 
 | 脚本 | 用途 |
 |------|------|
-| `verify_retry_targets.py` | 校验重跑目标是否仍留在 retry 列表中 |
-| `validate_workspace_retry_closure.py` | 校验 workspace retry-closure 产物完整性 |
-| `run_retry_step.sh` | 失败步骤重跑执行器，结果反写 version_status.tsv |
+| `validation/verify_retry_targets.py` | 校验重跑目标是否仍留在 retry 列表中 |
+| `validation/validate_workspace_retry_closure.py` | 校验 workspace retry-closure 产物完整性 |
+| `validation/run_retry_step.sh` | 失败步骤重跑执行器，结果反写 version_status.tsv |
 
 支撑脚本（SUPPORT — 被入口脚本 source 或调用）
 

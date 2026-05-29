@@ -56,7 +56,7 @@ if [[ ! -f "$STATS_FILE" ]]; then
 fi
 
 echo "生成版本清单..."
-python3 "$SCRIPT_DIR/generate_version_list.py" \
+python3 "$SCRIPT_DIR/reporting/generate_version_list.py" \
     "$STATS_FILE" \
     "$VERSION_LIST_FILE" \
     --min-crash-count 1
@@ -91,11 +91,11 @@ fi
 if [[ -n "$END_DATE" ]]; then
     FINAL_REPORT_ARGS+=(--end-date "$END_DATE")
 fi
-python3 "$SCRIPT_DIR/generate_final_report.py" "${FINAL_REPORT_ARGS[@]}"
+python3 "$SCRIPT_DIR/reporting/generate_final_report.py" "${FINAL_REPORT_ARGS[@]}"
 
 echo ""
 echo "生成 AI 汇总报告..."
-python3 "$SCRIPT_DIR/generate_ai_report.py" \
+python3 "$SCRIPT_DIR/reporting/generate_ai_report.py" \
     --package "$PACKAGE" \
     --workspace "$WORKSPACE"
 
