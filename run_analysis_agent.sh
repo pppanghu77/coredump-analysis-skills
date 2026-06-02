@@ -35,7 +35,7 @@ WORKSPACE=""
 RUN_BACKGROUND=false
 PROGRESS_INTERVAL=0  # 0表示禁用进度监控，非0表示启用(秒)
 DEFAULT_PROGRESS_INTERVAL=180
-AUTO_FIX_SUBMIT=true
+AUTO_FIX_SUBMIT="${AUTO_FIX_SUBMIT:-true}"
 DEFAULT_TARGET_BRANCH="origin/develop/eagle"
 TARGET_BRANCH=""  # 命令行指定时覆盖默认值
 REVIEWERS=()
@@ -63,6 +63,7 @@ ${GREEN}用法:${NC}
 ${GREEN}默认行为:${NC}
     - 不指定 --packages 时：自动从 packages.txt 读取当前启用的 24 个默认项目
     - --auto-fix-submit 当前默认已开启（仅真实代码修改可提交 Gerrit）
+    - 可通过环境变量关闭自动修复/提交：AUTO_FIX_SUBMIT=false bash run_analysis_agent.sh ...
     - --progress 不带数值时，默认使用 ${DEFAULT_PROGRESS_INTERVAL} 秒
 
 ${GREEN}必需参数:${NC}
@@ -85,6 +86,7 @@ ${GREEN}可选参数:${NC}
     --progress [秒]       启用进度监控；不带值时默认 ${DEFAULT_PROGRESS_INTERVAL} 秒
     --interval <秒>       进度报告间隔 (默认: ${DEFAULT_PROGRESS_INTERVAL} 秒)
     --auto-fix-submit     分析后自动检查 target branch 是否已修复，并仅在真实代码修改时自动提交 Gerrit
+                           （Agent 默认已开启，也可通过环境变量 AUTO_FIX_SUBMIT=false 关闭）
     --target-branch <br>  强制所有包使用同一分支 (覆盖 packages.txt 中的配置)
     --reviewer <email>    自动提交时附加 reviewer，可多次指定
     --no-gerrit-web-report      禁用分析结束后的 Gerrit 网页报告生成
@@ -132,6 +134,9 @@ ${GREEN}示例:${NC}
 
     # 分析后自动检查已修复并提交可自动修复的问题
     $0 --packages dde-launcher --auto-fix-submit --target-branch origin/develop/eagle
+
+    # 纯分析自动化：不执行自动修复/提交检查
+    AUTO_FIX_SUBMIT=false $0 --packages dde-session-ui --start-date 2026-03-14 --end-date 2026-04-14
 
     # 分析完成后启动 Gerrit 网页报告本地服务
     $0 --packages dde-dock --auto-fix-submit --serve-gerrit-web-report
@@ -559,21 +564,20 @@ ensure_summary_dir() {
 
 write_run_context() {
     ensure_summary_dir
-    python3 - "$WORKSPACE/$SUMMARY_DIR_NAME/run_context.json" <<'PY'
+    python3 - "$WORKSPACE/$SUMMARY_DIR_NAME/run_context.json" "$WORKSPACE" "$PACKAGES" "$ARCH" "$SYS_VERSION" "$START_DATE" "$END_DATE" "$DATE_RANGE_LABEL" "$SUMMARY_DIR_NAME" <<'PY'
 import json
-import os
 import sys
 
-path = sys.argv[1]
+path, workspace, packages, arch, sys_version, start_date, end_date, date_range_label, summary_dir_name = sys.argv[1:10]
 data = {
-    "workspace": os.environ.get("WORKSPACE", ""),
-    "packages": os.environ.get("PACKAGES", ""),
-    "arch": os.environ.get("ARCH", ""),
-    "sys_version": os.environ.get("SYS_VERSION", ""),
-    "start_date": os.environ.get("START_DATE", ""),
-    "end_date": os.environ.get("END_DATE", ""),
-    "date_range_label": os.environ.get("DATE_RANGE_LABEL", ""),
-    "summary_dir_name": os.environ.get("SUMMARY_DIR_NAME", ""),
+    "workspace": workspace,
+    "packages": packages,
+    "arch": arch,
+    "sys_version": sys_version,
+    "start_date": start_date,
+    "end_date": end_date,
+    "date_range_label": date_range_label,
+    "summary_dir_name": summary_dir_name,
 }
 with open(path, "w", encoding="utf-8") as f:
     json.dump(data, f, indent=2, ensure_ascii=False)

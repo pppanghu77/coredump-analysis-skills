@@ -181,7 +181,6 @@ def package_bundle(base_dir: Path, output_dir: Optional[Path] = None) -> Optiona
     BUNDLE_EXTRA_FILES = [
         "README.md",
         "run_analysis_agent.sh",
-        "run_analysis_agent_with_progress.sh",
         "run_analysis_cron.sh",
         "accounts.json",  # Template (user should edit after install)
     ]

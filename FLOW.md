@@ -122,17 +122,22 @@ G --> J
 
 ## 六、当前推荐入口
 
-1. 多包/全量：
+1. 唯一自动化入口：
 ```bash
-bash run_analysis_agent.sh --background --progress 180
+bash run_analysis_cron.sh
 ```
 
-2. 单包完整流程：
+2. 多包/全量手工入口：
+```bash
+bash run_analysis_agent.sh --progress 180
+```
+
+3. 单包完整流程：
 ```bash
 bash coredump-full-analysis/scripts/analyze_crash_complete.sh --package <package>
 ```
 
-3. 仅在排查或恢复时使用分步脚本：
+4. 仅在排查或恢复时使用分步脚本：
 - `step1_download.sh`
 - `step2_filter.sh`
 - `step3_source.sh`

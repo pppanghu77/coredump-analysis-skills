@@ -146,11 +146,30 @@ bash run_analysis_agent.sh --help
 - 账号或密码缺失时立即暂停流程，不做降级继续
 - deb/dbgsym 版本匹配支持 `-1`、`+build`、`.1-1` 等 Debian 构建后缀
 
+## 唯一自动化入口
+
+当前仓库仅保留一条 unattended / cron 自动化流程：
+
+```bash
+bash run_analysis_cron.sh
+```
+
+这条入口会：
+- 默认基于当前日期计算最近 7 天窗口
+- 若最近 7 天无数据，则自动回退到最近 15 天
+- 走 `run_analysis_agent.sh` 主链路
+- 固定以 `AUTO_FIX_SUBMIT=false` 纯分析模式运行
+- 运行完成后自动执行 workspace 验收
+
+如需手工触发多包或单包分析，仍使用：
+- `bash run_analysis_agent.sh ...`
+- `bash coredump-full-analysis/scripts/analyze_crash_complete.sh ...`
+
 ## 自动提交默认行为
 
 | 入口 | 脚本 | 自动提交默认值 | 如何关闭/开启 | 说明 |
 |------|------|----------------|---------------|------|
-| Agent 多包入口 | `run_analysis_agent.sh` | 默认开启 | 默认开启；当前没有单独的 `--no-auto-fix-submit` 开关 | 会把 `--auto-fix-submit` 传给下游完整流程；但只有真实代码修改（源码改动或代码 cherry-pick）才允许提交 Gerrit |
+| Agent 多包入口 | `run_analysis_agent.sh` | 默认开启 | 默认开启；可通过环境变量 `AUTO_FIX_SUBMIT=false` 关闭 | 会把 `--auto-fix-submit` 传给下游完整流程；但只有真实代码修改（源码改动或代码 cherry-pick）才允许提交 Gerrit |
 | 手动单包完整流程 | `coredump-full-analysis/scripts/analyze_crash_complete.sh` | 默认关闭 | 显式传 `--auto-fix-submit` 才开启 | 适合人工调试和保守执行；即使开启自动提交，也只有真实代码修改才允许推送 Gerrit |
 
 > 说明：这里的“自动提交”仅指真实代码修改生成的 Gerrit 提交；仅分析文件/说明文档（如 `coredump-analysis-report.md`）不会自动提交。
@@ -194,6 +213,9 @@ bash run_analysis_agent.sh --packages dde-session-shell
 
 # 3. 如需限制日期，再显式传入日期范围
 bash run_analysis_agent.sh --packages dde-session-shell --start-date 2026-03-10 --end-date 2026-04-09
+
+# 4. 如需纯分析自动化，不执行自动修复/提交检查
+AUTO_FIX_SUBMIT=false bash run_analysis_agent.sh --packages dde-session-shell --start-date 2026-03-10 --end-date 2026-04-09
 ```
 
 ### 方式2: 手动完整流程（跳过 Agent 直接调用脚本）
@@ -283,7 +305,7 @@ python3 analyze_crash_final.py --package dde-dock
 - **账号必填**：`accounts.json` 中 `metabase` / `gerrit` / `shuttle` / `system.sudo_password` 任一缺失时，流程会直接中止。
 - **源码失败降级**：源码克隆或版本 tag 不可用时，脚本仍基于已下载和筛选的崩溃数据生成分析报告。
 - **参数约定**：Agent 入口文档统一使用 `--packages`；`--package` 仅作为兼容别名保留。
-- **自动修复提交**：`run_analysis_agent.sh` 当前默认 `AUTO_FIX_SUBMIT=true`；如不希望分析后尝试自动修复/提交，需要显式关注调用参数与脚本行为。
+- **自动修复提交**：`run_analysis_agent.sh` 当前默认 `AUTO_FIX_SUBMIT=true`；如需纯分析自动化，可通过环境变量关闭：`AUTO_FIX_SUBMIT=false bash run_analysis_agent.sh ...`。
 
 ## 技能打包与安装
 

@@ -31,7 +31,23 @@ class RunAnalysisAgentHelpTests(unittest.TestCase):
         result = self.run_script('--help')
         self.assertEqual(0, result.returncode)
         self.assertIn('--auto-fix-submit 当前默认已开启（仅真实代码修改可提交 Gerrit）', result.stdout)
+        self.assertIn('AUTO_FIX_SUBMIT=false bash run_analysis_agent.sh', result.stdout)
         self.assertIn('--progress 不带数值时，默认使用 180 秒', result.stdout)
+
+    def test_auto_fix_submit_respects_environment_override(self):
+        with TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            script_copy = tmp_path / 'run_analysis_agent.sh'
+            script_copy.write_text(script_without_runtime_validation(), encoding='utf-8')
+            cmd = textwrap.dedent(f'''\
+                set -euo pipefail
+                export AUTO_FIX_SUBMIT=false
+                source {script_copy}
+                printf 'AUTO_FIX_SUBMIT=%s\n' "$AUTO_FIX_SUBMIT"
+            ''')
+            result = subprocess.run(['bash', '-c', cmd], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+
+        self.assertIn('AUTO_FIX_SUBMIT=false', result.stdout)
 
     def test_progress_rejects_non_integer(self):
         result = self.run_script('--progress', 'bad')

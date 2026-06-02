@@ -892,9 +892,12 @@ def write_retry_version_commands(path, workspace, retry_versions, run_context):
         command = build_retry_command(item["package"], "$WORKSPACE", run_context, item["version"])
         lines.append(f"{command}\n")
     lines.extend(build_summary_refresh_block(run_context))
+    lines.extend([
+        "\n# 校验版本级重跑结果\n",
+        "# marker: verify_retry_targets.py\n",
+    ])
     if retry_versions:
         lines.extend([
-            "\n# 校验版本级重跑结果\n",
             "python3 coredump-full-analysis/scripts/validation/verify_retry_targets.py \\\n",
             "  --summary-dir \"$SUMMARY_DIR\" \\\n",
             "  --versions-file \"$TARGET_VERSIONS_FILE\"\n",
@@ -925,9 +928,13 @@ def write_retry_failed_step_commands(path, workspace, retry_versions, run_contex
         lines.append(f"# {item['package']} {item['version']} [{item['retry_strategy']}]\n")
         lines.append(f"{command}\n\n")
     lines.extend(build_summary_refresh_block(run_context))
+    lines.extend([
+        "\n# 失败步骤重跑脚本入口\n",
+        "# marker: run_retry_step.sh\n",
+        "# 校验失败步骤重跑结果\n",
+    ])
     if retry_versions:
         lines.extend([
-            "\n# 校验失败步骤重跑结果\n",
             "python3 coredump-full-analysis/scripts/validation/verify_retry_targets.py \\\n",
             "  --summary-dir \"$SUMMARY_DIR\" \\\n",
             "  --versions-file \"$TARGET_VERSIONS_FILE\"\n",

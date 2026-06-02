@@ -70,7 +70,7 @@ load_accounts_env() {
     export PACKAGE_SERVER_URL="$(accounts_read_field '.internal_server.url')"
     export PACKAGE_SERVER_TASKS_ENDPOINT="$(accounts_read_field '.internal_server.tasks_endpoint')"
 
-    export SUDO_PASSWORD="$(accounts_read_field '.system.sudo_password')"
+    export SUDO_PASSWORD="$(accounts_read_field '.system.sudo_password // .system.password')"
     export ACCOUNTS_WORKSPACE_ROOT="$(accounts_expand_path "$(accounts_read_field '.paths.workspace')")"
 }
 
@@ -90,7 +90,7 @@ require_account_service() {
             accounts_value_missing "${SHUTTLE_PASSWORD:-}" && { echo "错误: accounts.json 缺少 shuttle.account.password" >&2; return 1; }
             ;;
         system)
-            accounts_value_missing "${SUDO_PASSWORD:-}" && { echo "错误: accounts.json 缺少 system.sudo_password" >&2; return 1; }
+            accounts_value_missing "${SUDO_PASSWORD:-}" && { echo "错误: accounts.json 缺少 system.sudo_password 或 system.password" >&2; return 1; }
             ;;
         *)
             echo "错误: 未知账户服务: $service" >&2

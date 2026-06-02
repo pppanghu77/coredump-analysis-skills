@@ -16,7 +16,7 @@
 | `step5_analyze.sh` | 分步入口：逐版本崩溃分析 |
 | `validate_workspace.sh` | workspace 验收：刷新汇总→校验闭环→输出摘要 |
 
-仓库根目录的 `run_analysis_agent.sh` 是多包全量编排入口，不在本目录内。
+仓库根目录的 `run_analysis_agent.sh` 是多包全量编排引擎，不在本目录内；仓库唯一保留的自动化包装入口是 `run_analysis_cron.sh`。
 
 脚本分类索引
 

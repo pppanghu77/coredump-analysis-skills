@@ -78,9 +78,10 @@ bash coredump-full-analysis/scripts/analyze_crash_complete.sh \
 
 | 场景 | 命令 |
 |------|------|
+| 每7天自动化流程 | 仓库根目录执行 `bash run_analysis_cron.sh`（默认最近7天，无数据自动回退15天） |
 | 单包完整流程 | `bash coredump-full-analysis/scripts/analyze_crash_complete.sh --package <pkg>` |
 | 仅下载数据 | `bash coredump-full-analysis/scripts/step1_download.sh --package <pkg>` |
-| 多包全量 Agent | 仓库根目录执行 `bash run_analysis_agent.sh` |
+| 多包全量 Agent（手工入口） | 仓库根目录执行 `bash run_analysis_agent.sh` |
 
 `run_analysis_agent.sh` 不在本目录内，但会调用本 skill 的完整流程脚本。多包分析建议用 Agent；单包调试建议直接用 `analyze_crash_complete.sh`。
 
@@ -179,7 +180,7 @@ bash coredump-full-analysis/scripts/analyze_crash_complete.sh \
 
 当前自动提交规则：只有真实代码修改（源码改动或代码 cherry-pick 产生的提交）才允许自动推送 Gerrit。仅分析文件/说明文档（如 `coredump-analysis-report.md`）不会自动提交。
 
-- `run_analysis_agent.sh`：默认开启自动提交，但仍受上述“仅代码修改可提交”约束。
+- `run_analysis_agent.sh`：默认开启自动提交，但仍受上述“仅代码修改可提交”约束；如需纯分析自动化，可通过环境变量关闭：`AUTO_FIX_SUBMIT=false bash run_analysis_agent.sh ...`。
 - `coredump-full-analysis/scripts/analyze_crash_complete.sh`：默认关闭自动提交，需显式传 `--auto-fix-submit`。
 
 ## Gerrit Web Report

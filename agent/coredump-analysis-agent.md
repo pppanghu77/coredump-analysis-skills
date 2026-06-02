@@ -221,14 +221,14 @@ for version in unique_versions:
 ```bash
 cd ~/.claude/skills/coredump-analysis-skills
 
-# 一键分析 dde-session-ui 最近一个月崩溃 (x86)
-bash run_analysis_agent.sh --package dde-session-ui --start-date 2026-03-14 --end-date 2026-04-14
+# 唯一自动化入口：默认分析最近7天；若无数据则自动回退到最近15天
+bash run_analysis_cron.sh
 
-# 分析 dde-session-ui arm64 架构
-bash run_analysis_agent.sh --package dde-session-ui --arch arm64 --start-date 2026-03-14 --end-date 2026-04-14
+# 手工执行多包主链路
+bash run_analysis_agent.sh --packages dde-session-ui --start-date 2026-03-14 --end-date 2026-04-14
 
-# 分析 dde-dock 指定版本范围
-bash run_analysis_agent.sh --package dde-dock --sys-version 1060-1075
+# 手工执行单包完整流程
+bash coredump-full-analysis/scripts/analyze_crash_complete.sh --package dde-dock --sys-version 1060-1075
 ```
 
 ### 单独调用各 Skill
@@ -251,12 +251,12 @@ python3 analyze_crash_final.py --package dde-dock --workspace ~/coredump-workspa
 
 | 参数 | 说明 | 默认值 |
 |------|------|-------|
-| `--package <name>` | 包名（必需） | - |
-| `--start-date <date>` | 开始日期 | 7天前 |
-| `--end-date <date>` | 结束日期 | 今天 |
+| `--packages <name>` | 多包主链路包列表 | 不传时读取 `packages.txt` |
+| `--start-date <date>` | 开始日期 | 不限制 |
+| `--end-date <date>` | 结束日期 | 不限制 |
 | `--sys-version <ver>` | 系统版本 | 1070-1075 |
-| `--arch <arch>` | 架构 | x86 |
-| `--workspace <dir>` | 工作目录 | ~/coredump-workspace |
+| `--arch <arch>` | 架构 | amd64 |
+| `--workspace <dir>` | 工作目录 | ~/coredump-workspace-* |
 
 ## 输出文件
 
