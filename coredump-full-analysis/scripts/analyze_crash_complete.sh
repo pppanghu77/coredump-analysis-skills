@@ -27,6 +27,7 @@ source "$CONFIG_DIR/package-server.env" 2>/dev/null || true
 # 默认值
 PACKAGE="${PACKAGE:-}"
 GERRIT_PROJECT="${GERRIT_PROJECT:-}"  # Gerrit 项目名，为空时使用 PACKAGE
+DATA_DOWNLOAD_NAME="${DATA_DOWNLOAD_NAME:-}"  # 崩溃数据下载名称，为空时使用 PACKAGE
 START_DATE="${START_DATE:-}"
 END_DATE="${END_DATE:-}"
 SYS_VERSION="${SYS_VERSION:-1070-1075}"
@@ -61,6 +62,15 @@ generate_workspace_with_timestamp() {
 get_gerrit_project() {
     if [[ -n "$GERRIT_PROJECT" ]]; then
         echo "$GERRIT_PROJECT"
+    else
+        echo "$PACKAGE"
+    fi
+}
+
+# 获取崩溃数据下载名称。普通包默认使用 PACKAGE；packages.txt 中 project:pkg1,pkg2 映射由上层显式传入 project。
+get_data_download_name() {
+    if [[ -n "$DATA_DOWNLOAD_NAME" ]]; then
+        echo "$DATA_DOWNLOAD_NAME"
     else
         echo "$PACKAGE"
     fi
@@ -281,6 +291,7 @@ ${GREEN}选项:${NC}
     --package <name>       兼容旧参数，等价于 --packages
     --project <name>       Gerrit 项目名（可选，默认与包名相同）
                            例如: go-lib, base/lightdm
+    --data-download-name <name>  崩溃数据下载名称（可选，默认与包名相同；一项目多包时由上层传项目名）
     --start-date <date>   开始日期（格式: YYYY-MM-DD；默认不限制）
                            例如: 2026-04-05
     --end-date <date>     结束日期（格式: YYYY-MM-DD；默认不限制）
@@ -332,6 +343,10 @@ parse_args() {
                 ;;
             --project)
                 GERRIT_PROJECT="$2"
+                shift 2
+                ;;
+            --data-download-name)
+                DATA_DOWNLOAD_NAME="$2"
                 shift 2
                 ;;
             --start-date)
@@ -496,14 +511,31 @@ download_data() {
         exit 1
     fi
 
-    # 获取用于崩溃搜索的包名（去掉base/前缀）
-    local search_package=$(get_crash_search_name "$PACKAGE")
+    # 下载名称可与当前分析包不同：一项目多包场景按项目下载，后续仍按 PACKAGE 筛选。
+    local download_name
+    download_name=$(get_data_download_name)
+    local search_package
+    search_package=$(get_crash_search_name "$download_name")
 
     # 直接使用原始脚本，不复制到workspace
+    echo -e "${YELLOW}当前分析包: $PACKAGE${NC}" >&2
+    echo -e "${YELLOW}崩溃数据下载名称: $download_name${NC}" >&2
     echo -e "${YELLOW}执行: bash $download_script${NC}" >&2
     echo "" >&2
 
     cd "$WORKSPACE/1.数据下载"
+
+    # 同一 workspace 内多子包共用同一项目下载数据；已存在时直接复用，避免重复拉取。
+    local existing_csv=""
+    existing_csv=$(find "$WORKSPACE/1.数据下载" -name "${search_package}_*_crash_*.csv" -type f 2>/dev/null | sort | tail -1 || true)
+    if [[ -n "$existing_csv" ]]; then
+        local existing_lines
+        existing_lines=$(wc -l < "$existing_csv" 2>/dev/null || echo 0)
+        echo -e "${GREEN}✅ 复用当前 workspace 已下载数据: $existing_csv ($existing_lines 行)${NC}" >&2
+        printf "%s" "$existing_csv"
+        return 0
+    fi
+
     local cmd=(bash "$download_script" --sys-version "$SYS_VERSION")
     [[ -n "$START_DATE" ]] && cmd+=(--start-date "$START_DATE")
     [[ -n "$END_DATE" ]] && cmd+=(--end-date "$END_DATE")
@@ -559,12 +591,12 @@ filter_data() {
     # 获取用于崩溃搜索的包名（去掉base/前缀）
     local search_package=$(get_crash_search_name "$PACKAGE")
 
-    echo -e "${YELLOW}执行: python3 $filter_script --workspace $WORKSPACE $search_package${NC}" >&2
+    echo -e "${YELLOW}执行: python3 $filter_script --workspace $WORKSPACE --input-csv $input_csv $search_package${NC}" >&2
     echo "" >&2
 
-    # 直接使用原始脚本，输出全部发送到 stderr
+    # 直接使用原始脚本，输出全部发送到 stderr。input_csv 可能是项目级下载文件，筛选脚本按实际包名过滤。
     cd "$WORKSPACE/2.数据筛选"
-    python3 "$filter_script" --workspace "$WORKSPACE" "$search_package" >&2
+    python3 "$filter_script" --workspace "$WORKSPACE" --input-csv "$input_csv" "$search_package" >&2
 
     local filtered_csv="$WORKSPACE/2.数据筛选/filtered_${search_package}_crash_data.csv"
     local stats_json="$WORKSPACE/2.数据筛选/${search_package}_crash_statistics.json"

@@ -22,7 +22,7 @@ ls -la ~/.ssh/id_rsa                         # when clone/push is involved
 
 ## Package scope
 
-`packages.txt` is the default full-analysis scope. Entries may be direct package names, `project:package`, or `project:package branch` mappings. Metabase download must always use the package side; project context is only for source/Gerrit/fix mapping.
+`packages.txt` is the default full-analysis scope. Entries may be direct package names, `project:package`, `project:package branch`, or one-project-many-packages entries such as `dde-network-core:dcc-network-plugin,deepin-service-plugin-network,dock-network-plugin`. Ordinary direct entries download Metabase data by package name. `project:package...` entries download crash data by the project side, then filter by the actual package side; project context is also used for source/Gerrit/fix mapping.
 
 ## Entrypoints
 
@@ -54,6 +54,7 @@ Important defaults:
 - `reuse.reuse_deb_packages` reuses matching `4.包管理/downloads` deb/dbgsym files for the same package, cleaned version, and architecture.
 - `reuse.workspace_search_root` defaults to `$SKILLS_DIR`; `reuse.max_workspace_scan` defaults to `20` and scans newest workspaces first.
 - CLI/env still override config: `--max-crashes`, `--addr2line-max-frames`, `MAX_CRASHES`, `ADDR2LINE_MAX_FRAMES`.
+- Lower-level `analyze_crash_complete.sh` accepts `--data-download-name`; use this only when the data download key intentionally differs from the package being filtered/analyzed.
 
 ## Workspace first stops
 

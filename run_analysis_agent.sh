@@ -50,6 +50,8 @@ SUMMARY_DIR_NAME="6.总结报告"
 declare -A PACKAGE_BRANCH_MAP
 # 包-项目映射（关联数组）：包名 → Gerrit 项目名
 declare -A PACKAGE_PROJECT_MAP
+# 包-崩溃数据下载名称映射（关联数组）：包名 → Metabase 下载名称；一项目多包时为项目名
+declare -A PACKAGE_DATA_DOWNLOAD_MAP
 GENERATE_GERRIT_WEB_REPORT=true
 SERVE_GERRIT_WEB_REPORT=false
 PACKAGE_STATUS_FILE=""
@@ -377,11 +379,14 @@ parse_packages_file() {
             pkg=$(echo "$pkg" | xargs)  # trim
             [[ -z "$pkg" ]] && continue
 
-            # 设置项目映射
+            # 设置项目映射和数据下载名称映射。
+            # project:pkg1,pkg2 表示多个二进制包属于同一个源码项目，崩溃数据下载按项目名执行，筛选/包管理按实际包名执行。
             if [[ -n "$project" ]]; then
                 PACKAGE_PROJECT_MAP["$pkg"]="$project"
+                PACKAGE_DATA_DOWNLOAD_MAP["$pkg"]="$project"
             else
                 PACKAGE_PROJECT_MAP["$pkg"]="$pkg"
+                PACKAGE_DATA_DOWNLOAD_MAP["$pkg"]="$pkg"
             fi
 
             # 设置分支映射
@@ -408,6 +413,12 @@ get_package_branch() {
 get_package_project() {
     local pkg="$1"
     echo "${PACKAGE_PROJECT_MAP[$pkg]:-$pkg}"
+}
+
+# 获取包对应的崩溃数据下载名称
+get_package_data_download_name() {
+    local pkg="$1"
+    echo "${PACKAGE_DATA_DOWNLOAD_MAP[$pkg]:-$pkg}"
 }
 
 load_default_packages_if_needed() {
@@ -455,9 +466,11 @@ has_non_default_mapping() {
     for pkg in "${PACKAGE_ARRAY[@]}"; do
         local local_branch
         local local_project
+        local local_download_name
         local_branch=$(get_package_branch "$pkg")
         local_project=$(get_package_project "$pkg")
-        if [[ "$local_branch" != "origin/$DEFAULT_TARGET_BRANCH" || "$local_project" != "$pkg" ]]; then
+        local_download_name=$(get_package_data_download_name "$pkg")
+        if [[ "$local_branch" != "origin/$DEFAULT_TARGET_BRANCH" || "$local_project" != "$pkg" || "$local_download_name" != "$pkg" ]]; then
             return 0
         fi
     done
@@ -467,15 +480,17 @@ has_non_default_mapping() {
 print_non_default_mappings() {
     has_non_default_mapping || return 0
 
-    echo -e "${CYAN}包-项目-分支映射:${NC}"
+    echo -e "${CYAN}包-项目-下载名称-分支映射:${NC}"
     local pkg
     for pkg in "${PACKAGE_ARRAY[@]}"; do
         local local_branch
         local local_project
+        local local_download_name
         local_branch=$(get_package_branch "$pkg")
         local_project=$(get_package_project "$pkg")
-        if [[ "$local_branch" != "origin/$DEFAULT_TARGET_BRANCH" || "$local_project" != "$pkg" ]]; then
-            echo -e "  ${pkg} → 项目:${local_project}, 分支:${local_branch}"
+        local_download_name=$(get_package_data_download_name "$pkg")
+        if [[ "$local_branch" != "origin/$DEFAULT_TARGET_BRANCH" || "$local_project" != "$pkg" || "$local_download_name" != "$pkg" ]]; then
+            echo -e "  ${pkg} → 项目:${local_project}, 数据下载:${local_download_name}, 分支:${local_branch}"
         fi
     done
     echo ""
@@ -800,11 +815,13 @@ launch_package() {
     local pkg="$1"
     local pkg_branch=$(get_package_branch "$pkg")
     local pkg_project=$(get_package_project "$pkg")
-    log_package_status "$pkg" "running" "" "analysis started (project: $pkg_project, branch: $pkg_branch)"
+    local pkg_data_download_name=$(get_package_data_download_name "$pkg")
+    log_package_status "$pkg" "running" "" "analysis started (project: $pkg_project, data_download: $pkg_data_download_name, branch: $pkg_branch)"
     cd "$SKILLS_DIR/coredump-full-analysis/scripts"
     local cmd=(bash analyze_crash_complete.sh
         --packages "$pkg"
         --project "$pkg_project"
+        --data-download-name "$pkg_data_download_name"
         --arch "$ARCH"
         --sys-version "$SYS_VERSION"
         --workspace "$WORKSPACE"
@@ -819,7 +836,7 @@ launch_package() {
     for reviewer in "${REVIEWERS[@]}"; do
         cmd+=(--reviewer "$reviewer")
     done
-    if SUDO_PASSWORD="$SUDO_PASSWORD" PROGRESS_INTERVAL="$PROGRESS_INTERVAL" ANALYSIS_CONFIG_FILE="$ANALYSIS_CONFIG_FILE" ENABLE_CODE_MANAGEMENT="$ENABLE_CODE_MANAGEMENT" ENABLE_PACKAGE_MANAGEMENT="$ENABLE_PACKAGE_MANAGEMENT" AUTO_FIX_SUBMIT="$AUTO_FIX_SUBMIT" MAX_CRASHES="$MAX_CRASHES" ADDR2LINE_MAX_FRAMES="$ADDR2LINE_MAX_FRAMES" "${cmd[@]}" 2>&1; then
+    if SUDO_PASSWORD="$SUDO_PASSWORD" PROGRESS_INTERVAL="$PROGRESS_INTERVAL" ANALYSIS_CONFIG_FILE="$ANALYSIS_CONFIG_FILE" ENABLE_CODE_MANAGEMENT="$ENABLE_CODE_MANAGEMENT" ENABLE_PACKAGE_MANAGEMENT="$ENABLE_PACKAGE_MANAGEMENT" AUTO_FIX_SUBMIT="$AUTO_FIX_SUBMIT" MAX_CRASHES="$MAX_CRASHES" ADDR2LINE_MAX_FRAMES="$ADDR2LINE_MAX_FRAMES" DATA_DOWNLOAD_NAME="$pkg_data_download_name" "${cmd[@]}" 2>&1; then
         # 如果启用了自动修复提交，调用修复映射脚本
         if [[ "$AUTO_FIX_SUBMIT" == "true" ]]; then
             echo -e "${YELLOW}开始修复映射和Gerrit提交 (项目: $pkg_project, 分支: $pkg_branch)...${NC}"

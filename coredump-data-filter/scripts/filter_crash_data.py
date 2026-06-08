@@ -253,8 +253,8 @@ def find_latest_csv(package, download_dir):
         return None
     return sorted(files)[-1]
 
-def process_crash_data(package, workspace):
-    """处理指定包的崩溃数据"""
+def process_crash_data(package, workspace, input_csv_override=None):
+    """处理指定包的崩溃数据；input_csv_override 支持从项目级下载数据中按实际包筛选。"""
     DOWNLOAD_DIR = f"{workspace}/1.数据下载"
     OUTPUT_DIR = f"{workspace}/2.数据筛选"
 
@@ -264,8 +264,8 @@ def process_crash_data(package, workspace):
     print(f"工作目录: {workspace}")
     print()
 
-    # 查找CSV文件
-    input_csv = find_latest_csv(package, DOWNLOAD_DIR)
+    # 查找CSV文件；一项目多包场景可由上层传入项目级 CSV，然后这里按实际 package 字段筛选。
+    input_csv = input_csv_override or find_latest_csv(package, DOWNLOAD_DIR)
     if not input_csv:
         print(f"错误：未找到 {package} 的崩溃数据文件")
         print(f"请先运行数据下载步骤，下载目录: {DOWNLOAD_DIR}")
@@ -303,6 +303,10 @@ def process_crash_data(package, workspace):
             sig = get_field(row, 'Sig')
             sys_v_number = get_field(row, 'Sys V Number')
             baseline = get_field(row, 'Baseline')
+
+            # 项目级下载 CSV 可能包含同一源码项目下多个二进制包；筛选阶段必须只保留当前分析包。
+            if package_name and package_name != package:
+                continue
 
             # 过滤无效记录
             if not exe or not stack_info:
@@ -528,9 +532,10 @@ def main():
     parser = argparse.ArgumentParser(description='崩溃数据筛选工具')
     parser.add_argument('package', help='包名')
     parser.add_argument('--workspace', default=DEFAULT_WORKSPACE, help='工作目录')
+    parser.add_argument('--input-csv', default='', help='显式指定输入CSV；用于从项目级下载数据中筛选实际包')
 
     args = parser.parse_args()
-    process_crash_data(args.package, args.workspace)
+    process_crash_data(args.package, args.workspace, args.input_csv or None)
 
 if __name__ == '__main__':
     main()
