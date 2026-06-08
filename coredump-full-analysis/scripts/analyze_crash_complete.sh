@@ -39,10 +39,16 @@ ADDR2LINE_MAX_FRAMES="${ADDR2LINE_MAX_FRAMES:-}"  # addr2line 最大解析帧数
 ENABLE_CODE_MANAGEMENT="${ENABLE_CODE_MANAGEMENT:-}"
 ENABLE_PACKAGE_MANAGEMENT="${ENABLE_PACKAGE_MANAGEMENT:-}"
 AUTO_FIX_SUBMIT="${AUTO_FIX_SUBMIT:-}"
+ENABLE_LOCAL_REUSE="${ENABLE_LOCAL_REUSE:-}"
+REUSE_SOURCE_CODE="${REUSE_SOURCE_CODE:-}"
+REUSE_DEB_PACKAGES="${REUSE_DEB_PACKAGES:-}"
+WORKSPACE_SEARCH_ROOT="${WORKSPACE_SEARCH_ROOT:-}"
+MAX_WORKSPACE_SCAN="${MAX_WORKSPACE_SCAN:-}"
 TARGET_BRANCH="${TARGET_BRANCH:-origin/develop/eagle}"
 REVIEWERS=()
 SUMMARY_DIR_NAME="6.总结报告"
 VERSION_STATUS_FILE=""
+REUSABLE_WORKSPACES_FILE=""
 STEP_STATUS=""
 STEP_MESSAGE=""
 
@@ -179,24 +185,54 @@ read_config_int() {
     echo "$default_value"
 }
 
+read_config_string() {
+    local jq_path="$1"
+    local default_value="${2:-}"
+    if [[ -f "$ANALYSIS_CONFIG_FILE" ]] && command -v jq &> /dev/null; then
+        local value
+        value=$(jq -r "$jq_path // empty" "$ANALYSIS_CONFIG_FILE" 2>/dev/null || true)
+        if [[ -n "$value" && "$value" != "null" ]]; then
+            echo "$value"
+            return 0
+        fi
+    fi
+    echo "$default_value"
+}
+
 load_workflow_config() {
     local config_code_management
     local config_package_management
     local config_auto_fix_submit
     local config_max_crashes
     local config_addr2line_max_frames
+    local config_enable_local_reuse
+    local config_reuse_source_code
+    local config_reuse_deb_packages
+    local config_workspace_search_root
+    local config_max_workspace_scan
 
     config_code_management=$(read_config_bool '.workflow.enable_code_management' true)
     config_package_management=$(read_config_bool '.workflow.enable_package_management' true)
     config_auto_fix_submit=$(read_config_bool '.workflow.enable_auto_fix_submit' false)
     config_max_crashes=$(read_config_int '.analysis.max_crashes' 0)
     config_addr2line_max_frames=$(read_config_int '.analysis.addr2line_max_frames' 500)
+    config_enable_local_reuse=$(read_config_bool '.reuse.enable_local_reuse' true)
+    config_reuse_source_code=$(read_config_bool '.reuse.reuse_source_code' true)
+    config_reuse_deb_packages=$(read_config_bool '.reuse.reuse_deb_packages' true)
+    config_workspace_search_root=$(read_config_string '.reuse.workspace_search_root' '')
+    config_max_workspace_scan=$(read_config_int '.reuse.max_workspace_scan' 20)
 
     ENABLE_CODE_MANAGEMENT=$(normalize_bool "${ENABLE_CODE_MANAGEMENT:-$config_code_management}" "$config_code_management")
     ENABLE_PACKAGE_MANAGEMENT=$(normalize_bool "${ENABLE_PACKAGE_MANAGEMENT:-$config_package_management}" "$config_package_management")
     AUTO_FIX_SUBMIT=$(normalize_bool "${AUTO_FIX_SUBMIT:-$config_auto_fix_submit}" "$config_auto_fix_submit")
     MAX_CRASHES="${MAX_CRASHES:-$config_max_crashes}"
     ADDR2LINE_MAX_FRAMES="${ADDR2LINE_MAX_FRAMES:-$config_addr2line_max_frames}"
+    ENABLE_LOCAL_REUSE=$(normalize_bool "${ENABLE_LOCAL_REUSE:-$config_enable_local_reuse}" "$config_enable_local_reuse")
+    REUSE_SOURCE_CODE=$(normalize_bool "${REUSE_SOURCE_CODE:-$config_reuse_source_code}" "$config_reuse_source_code")
+    REUSE_DEB_PACKAGES=$(normalize_bool "${REUSE_DEB_PACKAGES:-$config_reuse_deb_packages}" "$config_reuse_deb_packages")
+    WORKSPACE_SEARCH_ROOT="${WORKSPACE_SEARCH_ROOT:-$config_workspace_search_root}"
+    MAX_WORKSPACE_SCAN="${MAX_WORKSPACE_SCAN:-$config_max_workspace_scan}"
+    [[ "$MAX_WORKSPACE_SCAN" =~ ^[0-9]+$ && "$MAX_WORKSPACE_SCAN" -gt 0 ]] || MAX_WORKSPACE_SCAN=20
 }
 
 # 检查配置完整性
@@ -616,17 +652,156 @@ download_source() {
 # 以下是按版本处理的步骤（3+4+5 整合为版本循环）
 # ============================================================
 
+get_workspace_search_root() {
+    if [[ -n "$WORKSPACE_SEARCH_ROOT" ]]; then
+        echo "$WORKSPACE_SEARCH_ROOT"
+    else
+        echo "$SKILLS_DIR"
+    fi
+}
+
+build_reusable_workspaces_list() {
+    local search_root
+    search_root=$(get_workspace_search_root)
+    local max_scan="${MAX_WORKSPACE_SCAN:-20}"
+    [[ "$max_scan" =~ ^[0-9]+$ && "$max_scan" -gt 0 ]] || max_scan=20
+
+    if [[ ! -d "$search_root" ]]; then
+        return 0
+    fi
+
+    local current_workspace_real=""
+    if [[ -n "$WORKSPACE" && -e "$WORKSPACE" ]]; then
+        current_workspace_real=$(realpath "$WORKSPACE" 2>/dev/null || true)
+    fi
+
+    find "$search_root" -maxdepth 1 -type d -name 'coredump-workspace-*' -printf '%T@\t%p\n' 2>/dev/null \
+        | sort -nr \
+        | cut -f2- \
+        | while IFS= read -r workspace_dir; do
+            local workspace_real
+            workspace_real=$(realpath "$workspace_dir" 2>/dev/null || echo "$workspace_dir")
+            if [[ -n "$current_workspace_real" && "$workspace_real" == "$current_workspace_real" ]]; then
+                continue
+            fi
+            echo "$workspace_dir"
+        done \
+        | head -n "$max_scan"
+}
+
+init_reusable_workspaces_cache() {
+    REUSABLE_WORKSPACES_FILE="$WORKSPACE/$SUMMARY_DIR_NAME/reusable_workspaces.txt"
+    : > "$REUSABLE_WORKSPACES_FILE" || return 1
+
+    if [[ "$ENABLE_LOCAL_REUSE" != "true" ]]; then
+        return 0
+    fi
+
+    build_reusable_workspaces_list > "$REUSABLE_WORKSPACES_FILE" || return 1
+    local count
+    count=$(grep -c . "$REUSABLE_WORKSPACES_FILE" 2>/dev/null || echo 0)
+    echo -e "${BLUE}本地复用 workspace 缓存: $REUSABLE_WORKSPACES_FILE (${count} 个)${NC}"
+}
+
+list_reusable_workspaces() {
+    if [[ -n "$REUSABLE_WORKSPACES_FILE" && -f "$REUSABLE_WORKSPACES_FILE" ]]; then
+        cat "$REUSABLE_WORKSPACES_FILE"
+    else
+        build_reusable_workspaces_list
+    fi
+}
+
+source_repo_matches_version() {
+    local repo_dir="$1"
+    local version="$2"
+    [[ -d "$repo_dir/.git" ]] || return 1
+
+    # 为避免源码与 deb/dbgsym 版本不一致，本地复用只接受 HEAD 精确落在目标 tag 上。
+    # 不使用 tag-N-g<sha> 近似匹配；不匹配时宁愿重新 clone/checkout，也不要错复用源码。
+    local current_tag
+    current_tag=$(git -C "$repo_dir" describe --tags --exact-match 2>/dev/null || true)
+    [[ "$current_tag" == "$version" ]]
+}
+
+copy_reusable_source_repo() {
+    local source_repo="$1"
+    local target_repo="$2"
+
+    [[ -d "$source_repo/.git" ]] || return 1
+    mkdir -p "$(dirname "$target_repo")" || return 1
+    rm -rf "$target_repo" || return 1
+
+    if command -v rsync &> /dev/null; then
+        rsync -a --delete "$source_repo/" "$target_repo/" || return 1
+    else
+        cp -a "$source_repo" "$target_repo" || return 1
+    fi
+
+    [[ -d "$target_repo/.git" ]] || return 1
+}
+
+find_reusable_source_repo() {
+    local gerrit_project="$1"
+    local version="$2"
+    local workspace_dir
+
+    while IFS= read -r workspace_dir; do
+        [[ -n "$workspace_dir" ]] || continue
+        local candidate_repo="$workspace_dir/3.代码管理/$gerrit_project"
+        if source_repo_matches_version "$candidate_repo" "$version"; then
+            echo "$candidate_repo"
+            return 0
+        fi
+    done < <(list_reusable_workspaces)
+
+    return 1
+}
+
+copy_reusable_deb_files() {
+    local deb_files="$1"
+    local target_dir="$2"
+    local copied=0
+    mkdir -p "$target_dir" || return 1
+
+    while IFS= read -r deb_file; do
+        [[ -n "$deb_file" && -f "$deb_file" ]] || continue
+        local target_file="$target_dir/$(basename "$deb_file")"
+        if [[ ! -f "$target_file" ]]; then
+            cp "$deb_file" "$target_file" || return 1
+        fi
+        ((copied++)) || true
+    done <<< "$deb_files"
+
+    echo "$copied"
+}
+
+find_reusable_deb_files() {
+    local package="$1"
+    local clean_version="$2"
+    local arch="$3"
+    local workspace_dir
+
+    while IFS= read -r workspace_dir; do
+        [[ -n "$workspace_dir" ]] || continue
+        local candidate_dl_dir="$workspace_dir/4.包管理/downloads"
+        [[ -d "$candidate_dl_dir" ]] || continue
+        local deb_files
+        deb_files=$(find_deb_files_for_version "$candidate_dl_dir" "$package" "$clean_version" "$arch")
+        if [[ -n "$deb_files" ]]; then
+            printf '%s\n' "$deb_files"
+            return 0
+        fi
+    done < <(list_reusable_workspaces)
+
+    return 1
+}
+
 # 步骤3: 切换代码到指定版本
 download_source_for_version() {
     local package="$1"
     local version="$2"
     local source_script="$SKILLS_DIR/coredump-code-management/scripts/download_crash_source.sh"
     local gerrit_project=$(get_gerrit_project)
-
-    if [[ ! -f "$source_script" ]]; then
-        echo -e "${RED}错误: 代码管理脚本不存在: $source_script${NC}" >&2
-        return 1
-    fi
 
     echo -e "${YELLOW}━━━ 步骤3: 切换代码到 $version (项目: $gerrit_project) ━━━${NC}"
 
@@ -636,15 +811,37 @@ download_source_for_version() {
         return 0
     fi
 
-    # 检查本地是否已有该版本的源码
+    # 检查当前 workspace 是否已有该版本的源码
     local repo_dir="$WORKSPACE/3.代码管理/$gerrit_project"
-    if [[ -d "$repo_dir/.git" ]]; then
-        local current_tag=$(git -C "$repo_dir" describe --tags --exact-match 2>/dev/null || true)
-        if [[ "$current_tag" == "$version" ]]; then
-            echo -e "${GREEN}✅ 源码已存在且版本匹配 ($version)，跳过切换${NC}"
-            set_step_result "ok" "source already at correct version"
-            return 0
+    if source_repo_matches_version "$repo_dir" "$version"; then
+        echo -e "${GREEN}✅ 源码已存在且版本匹配 ($version)，跳过切换${NC}"
+        set_step_result "ok" "source already at correct version"
+        return 0
+    fi
+
+    # 优先复用历史 workspace 中的源码
+    if [[ "$ENABLE_LOCAL_REUSE" == "true" && "$REUSE_SOURCE_CODE" == "true" ]]; then
+        echo -e "${BLUE}🔍 搜索本地历史 workspace 中可复用源码...${NC}"
+        local reusable_repo
+        reusable_repo=$(find_reusable_source_repo "$gerrit_project" "$version" || true)
+        if [[ -n "$reusable_repo" ]]; then
+            echo -e "${GREEN}✅ 找到可复用源码: $reusable_repo${NC}"
+            if copy_reusable_source_repo "$reusable_repo" "$repo_dir" && source_repo_matches_version "$repo_dir" "$version"; then
+                echo -e "${GREEN}✅ 源码已复制到当前 workspace 并通过版本校验: $repo_dir${NC}"
+                set_step_result "ok" "source reused from local workspace: $reusable_repo"
+                return 0
+            fi
+            echo -e "${YELLOW}⚠️ 复用源码复制或校验失败，继续执行 Gerrit clone/checkout${NC}"
+            rm -rf "$repo_dir" || true
+        else
+            echo -e "${YELLOW}⚠️ 未找到可复用源码，执行 Gerrit clone/checkout${NC}"
         fi
+    fi
+
+    if [[ ! -f "$source_script" ]]; then
+        echo -e "${RED}错误: 代码管理脚本不存在: $source_script${NC}" >&2
+        set_step_result "failed_missing_script" "source download script missing"
+        return 1
     fi
 
     # 设置环境变量并执行脚本（使用 gerrit_project 而非 package）
@@ -684,7 +881,11 @@ download_packages_for_version() {
     fi
 
     # 创建下载目录
-    mkdir -p "$dl_dir"
+    mkdir -p "$dl_dir" || {
+        echo -e "${RED}错误: 无法创建下载目录: $dl_dir${NC}" >&2
+        set_step_result "failed" "cannot create package download dir"
+        return 1
+    }
 
     # 清理版本号（用于下载）
     local clean_version=$(echo "$version" | sed 's/^1://' | sed 's/-1$//')
@@ -695,11 +896,35 @@ download_packages_for_version() {
         return 0
     fi
 
-    # 检查本地是否已有该版本的deb包
+    # 检查当前 workspace 是否已有该版本的deb包
     if [[ -n "$(find_deb_files_for_version "$dl_dir" "$package" "$clean_version" "$ARCH")" ]]; then
         echo -e "${GREEN}✅ $package $clean_version 的deb包已存在，跳过下载${NC}"
         set_step_result "ok" "deb packages already exist"
         return 0
+    fi
+
+    # 优先复用历史 workspace 中的 deb/dbgsym 包
+    if [[ "$ENABLE_LOCAL_REUSE" == "true" && "$REUSE_DEB_PACKAGES" == "true" ]]; then
+        echo -e "${BLUE}🔍 搜索本地历史 workspace 中可复用 deb/dbgsym...${NC}"
+        local reusable_deb_files
+        reusable_deb_files=$(find_reusable_deb_files "$package" "$clean_version" "$ARCH" || true)
+        if [[ -n "$reusable_deb_files" ]]; then
+            local source_dir
+            source_dir=$(dirname "$(printf '%s\n' "$reusable_deb_files" | head -n 1)")
+            local copied_count
+            if copied_count=$(copy_reusable_deb_files "$reusable_deb_files" "$dl_dir"); then
+                if [[ -n "$(find_deb_files_for_version "$dl_dir" "$package" "$clean_version" "$ARCH")" ]]; then
+                    echo -e "${GREEN}✅ 复用 deb/dbgsym 文件 ${copied_count} 个，来源: $source_dir${NC}"
+                    set_step_result "ok" "deb packages reused from local workspace: $source_dir"
+                    return 0
+                fi
+                echo -e "${YELLOW}⚠️ deb/dbgsym 复制后校验失败，继续执行包下载${NC}"
+            else
+                echo -e "${YELLOW}⚠️ deb/dbgsym 复制失败，继续执行包下载${NC}"
+            fi
+        else
+            echo -e "${YELLOW}⚠️ 未找到可复用 deb/dbgsym，执行包下载${NC}"
+        fi
     fi
 
     # 下载该版本的包和调试符号（使用位置参数格式）
@@ -750,6 +975,8 @@ find_deb_files_for_version() {
         *) arch_suffix="$arch" ;;
     esac
 
+    [[ -d "$dl_dir" ]] || return 0
+
     find "$dl_dir" -maxdepth 1 -type f \( \
         -name "${package}_${version}_${arch_suffix}.deb" -o \
         -name "${package}_${version}-*_${arch_suffix}.deb" -o \
@@ -762,7 +989,7 @@ find_deb_files_for_version() {
         -name "${package}-dbgsym_${version}-${arch_suffix}.deb" -o \
         -name "${package}-dbgsym_${version}+*.deb" -o \
         -name "${package}-dbgsym_${version}.*.deb" \
-    \) 2>/dev/null | sort
+    \) 2>/dev/null
 }
 
 split_deb_files_for_install() {
@@ -1090,7 +1317,7 @@ main() {
 
     # 2. 加载流程开关配置（数据筛选为必需步骤，不提供关闭开关）
     load_workflow_config
-    echo -e "${BLUE}流程配置:${NC} config=$ANALYSIS_CONFIG_FILE, code_management=$ENABLE_CODE_MANAGEMENT, package_management=$ENABLE_PACKAGE_MANAGEMENT, auto_fix_submit=$AUTO_FIX_SUBMIT, max_crashes=$MAX_CRASHES, addr2line_max_frames=$ADDR2LINE_MAX_FRAMES"
+    echo -e "${BLUE}流程配置:${NC} config=$ANALYSIS_CONFIG_FILE, code_management=$ENABLE_CODE_MANAGEMENT, package_management=$ENABLE_PACKAGE_MANAGEMENT, auto_fix_submit=$AUTO_FIX_SUBMIT, max_crashes=$MAX_CRASHES, addr2line_max_frames=$ADDR2LINE_MAX_FRAMES, local_reuse=$ENABLE_LOCAL_REUSE, reuse_source=$REUSE_SOURCE_CODE, reuse_deb=$REUSE_DEB_PACKAGES, reuse_root=${WORKSPACE_SEARCH_ROOT:-$SKILLS_DIR}, max_workspace_scan=$MAX_WORKSPACE_SCAN"
 
     # 3. 检查配置完整性
     check_config
@@ -1101,6 +1328,7 @@ main() {
     # 5. 创建工作目录
     setup_workspace
     init_status_files
+    init_reusable_workspaces_cache || echo -e "${YELLOW}⚠️ 初始化本地复用 workspace 缓存失败，将按需扫描${NC}"
 
     # 5. 执行分析步骤
     # 步骤1+2: 数据下载和筛选（只执行一次）

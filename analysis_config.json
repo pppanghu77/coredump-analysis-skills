@@ -15,5 +15,18 @@
     "max_crashes_comment": "单版本最大分析崩溃数量。0 表示分析该版本全部去重后的崩溃；大于 0 时只分析前 N 个崩溃。可通过 MAX_CRASHES 或 --max-crashes 临时覆盖。",
     "addr2line_max_frames": 500,
     "addr2line_max_frames_comment": "增强分析中 addr2line 最多解析的栈帧数量。数值越大分析越深但耗时越长。当前默认值：500。可通过 ADDR2LINE_MAX_FRAMES 或 --addr2line-max-frames 临时覆盖。"
+  },
+  "reuse": {
+    "_comment": "本地历史 workspace 复用配置。启用后优先复用历史 workspace 中已有源码和 deb/dbgsym 包，找不到可复用数据时才执行原有下载逻辑。",
+    "enable_local_reuse": true,
+    "enable_local_reuse_comment": "本地复用总开关。true 时启用源码和包复用；false 时完全使用原有代码管理和包管理下载逻辑。",
+    "reuse_source_code": true,
+    "reuse_source_code_comment": "控制是否复用历史 workspace 中的 3.代码管理 源码目录。找到相同 Gerrit 项目且版本匹配的 git 仓库时复制到当前 workspace。",
+    "reuse_deb_packages": true,
+    "reuse_deb_packages_comment": "控制是否复用历史 workspace 中的 4.包管理/downloads deb/dbgsym 包。找到相同包名、版本、架构的 deb/dbgsym 文件时复制到当前 workspace。",
+    "workspace_search_root": "",
+    "workspace_search_root_comment": "历史 workspace 搜索根目录。为空时默认使用 $SKILLS_DIR，扫描其下的 coredump-workspace-* 目录。",
+    "max_workspace_scan": 20,
+    "max_workspace_scan_comment": "最多扫描最近 N 个历史 workspace，按目录修改时间倒序扫描，避免 workspace 过多导致分析启动变慢。"
   }
 }
