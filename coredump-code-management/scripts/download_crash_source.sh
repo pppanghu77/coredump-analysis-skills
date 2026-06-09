@@ -8,7 +8,7 @@
 #
 # 改进：
 #   - 所有 git 操作使用绝对路径，不依赖当前目录
-#   - 添加回退逻辑：精确匹配 -> 模糊匹配 -> develop/eagle
+#   - 版本切换逻辑：精确匹配 -> 模糊匹配；找不到 tag 时失败，避免源码版本失真
 #   - 添加 git fetch 失败重试
 #=============================================================================
 
@@ -183,15 +183,6 @@ if [ -z "$CHECKOUT_TAG" ]; then
     fi
 fi
 
-# 3. 回退到 origin/develop/eagle
-if [ -z "$CHECKOUT_TAG" ]; then
-    # 检查是否存在 develop/eagle 分支
-    if git -C "$CODE_PATH" ls-remote --exit-code --heads origin "origin/develop/eagle" 2>/dev/null | grep -q "develop/eagle"; then
-        CHECKOUT_TAG="origin/develop/eagle"
-        CHECKOUT_METHOD="回退到 develop/eagle"
-    fi
-fi
-
 if [ -n "$CHECKOUT_TAG" ]; then
     echo -e "  切换方式: ${GREEN}$CHECKOUT_METHOD${NC}"
     echo -e "  目标版本: ${GREEN}$CHECKOUT_TAG${NC}"
@@ -218,10 +209,13 @@ if [ -n "$CHECKOUT_TAG" ]; then
             echo -e "  ${GREEN}✅ 切换并重置成功${NC}"
         else
             echo -e "  ${RED}❌ 切换失败${NC}"
+            exit 1
         fi
     fi
 else
-    echo -e "${YELLOW}  未找到匹配的 tag，保持当前分支${NC}"
+    echo -e "${RED}  ❌ 未找到匹配的 tag: $VERSION_CLEAN${NC}"
+    echo -e "${YELLOW}  为避免源码版本与 coredump 不一致，停止当前版本分析${NC}"
+    exit 2
 fi
 
 # 显示当前信息

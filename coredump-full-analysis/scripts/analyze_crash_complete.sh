@@ -687,8 +687,15 @@ download_source() {
 get_workspace_search_root() {
     if [[ -n "$WORKSPACE_SEARCH_ROOT" ]]; then
         echo "$WORKSPACE_SEARCH_ROOT"
+        return 0
+    fi
+
+    # 默认 workspace 由 check_config() 基于 accounts.json paths.workspace 或 $HOME 生成。
+    # 历史复用必须扫描同一个根目录，而不是 $SKILLS_DIR；否则默认生成在 ~/coredump-workspace-* 的历史数据会被漏掉。
+    if [[ -n "$WORKSPACE" ]]; then
+        dirname "$WORKSPACE"
     else
-        echo "$SKILLS_DIR"
+        echo "$HOME"
     fi
 }
 
@@ -743,13 +750,16 @@ list_reusable_workspaces() {
     fi
 }
 
-source_repo_matches_version() {
+source_repo_available_for_reuse() {
+    local repo_dir="$1"
+    [[ -d "$repo_dir/.git" ]]
+}
+
+source_repo_at_exact_version() {
     local repo_dir="$1"
     local version="$2"
     [[ -d "$repo_dir/.git" ]] || return 1
 
-    # 为避免源码与 deb/dbgsym 版本不一致，本地复用只接受 HEAD 精确落在目标 tag 上。
-    # 不使用 tag-N-g<sha> 近似匹配；不匹配时宁愿重新 clone/checkout，也不要错复用源码。
     local current_tag
     current_tag=$(git -C "$repo_dir" describe --tags --exact-match 2>/dev/null || true)
     [[ "$current_tag" == "$version" ]]
@@ -780,7 +790,7 @@ find_reusable_source_repo() {
     while IFS= read -r workspace_dir; do
         [[ -n "$workspace_dir" ]] || continue
         local candidate_repo="$workspace_dir/3.代码管理/$gerrit_project"
-        if source_repo_matches_version "$candidate_repo" "$version"; then
+        if source_repo_available_for_reuse "$candidate_repo"; then
             echo "$candidate_repo"
             return 0
         fi
@@ -843,28 +853,32 @@ download_source_for_version() {
         return 0
     fi
 
-    # 检查当前 workspace 是否已有该版本的源码
+    # 检查当前 workspace 是否已有该项目源码；只有已在目标 tag 时才跳过 checkout。
     local repo_dir="$WORKSPACE/3.代码管理/$gerrit_project"
-    if source_repo_matches_version "$repo_dir" "$version"; then
+    if source_repo_at_exact_version "$repo_dir" "$version"; then
         echo -e "${GREEN}✅ 源码已存在且版本匹配 ($version)，跳过切换${NC}"
         set_step_result "ok" "source already at correct version"
         return 0
-    fi
-
-    # 优先复用历史 workspace 中的源码
-    if [[ "$ENABLE_LOCAL_REUSE" == "true" && "$REUSE_SOURCE_CODE" == "true" ]]; then
+    elif source_repo_available_for_reuse "$repo_dir"; then
+        echo -e "${GREEN}✅ 源码已存在且项目匹配 ($gerrit_project)，继续切换到目标版本${NC}"
+    elif [[ "$ENABLE_LOCAL_REUSE" == "true" && "$REUSE_SOURCE_CODE" == "true" ]]; then
+        # 优先复用历史 workspace 中同项目源码；复用后继续执行 checkout，避免源码版本与 coredump 不一致。
         echo -e "${BLUE}🔍 搜索本地历史 workspace 中可复用源码...${NC}"
         local reusable_repo
         reusable_repo=$(find_reusable_source_repo "$gerrit_project" "$version" || true)
         if [[ -n "$reusable_repo" ]]; then
             echo -e "${GREEN}✅ 找到可复用源码: $reusable_repo${NC}"
-            if copy_reusable_source_repo "$reusable_repo" "$repo_dir" && source_repo_matches_version "$repo_dir" "$version"; then
-                echo -e "${GREEN}✅ 源码已复制到当前 workspace 并通过版本校验: $repo_dir${NC}"
-                set_step_result "ok" "source reused from local workspace: $reusable_repo"
-                return 0
+            if copy_reusable_source_repo "$reusable_repo" "$repo_dir" && source_repo_available_for_reuse "$repo_dir"; then
+                if source_repo_at_exact_version "$repo_dir" "$version"; then
+                    echo -e "${GREEN}✅ 源码已复制到当前 workspace 且版本匹配: $repo_dir${NC}"
+                    set_step_result "ok" "source reused from local workspace at correct version: $reusable_repo"
+                    return 0
+                fi
+                echo -e "${GREEN}✅ 源码已复制到当前 workspace，继续切换到目标版本: $repo_dir${NC}"
+            else
+                echo -e "${YELLOW}⚠️ 复用源码复制或项目校验失败，继续执行 Gerrit clone/checkout${NC}"
+                rm -rf "$repo_dir" || true
             fi
-            echo -e "${YELLOW}⚠️ 复用源码复制或校验失败，继续执行 Gerrit clone/checkout${NC}"
-            rm -rf "$repo_dir" || true
         else
             echo -e "${YELLOW}⚠️ 未找到可复用源码，执行 Gerrit clone/checkout${NC}"
         fi
@@ -876,13 +890,21 @@ download_source_for_version() {
         return 1
     fi
 
-    # 设置环境变量并执行脚本（使用 gerrit_project 而非 package）
+    # 设置环境变量并执行脚本（使用 gerrit_project 而非 package）。
+    # 该脚本会在已有/复用仓库中 fetch tags，并按目标版本执行 checkout/reset。
+    local source_exit=0
     if COREDUMP_WORKSPACE="$WORKSPACE" GERRIT_USER="$GERRIT_USER" GERRIT_HOST="${GERRIT_HOST:-gerrit.uniontech.com}" GERRIT_PORT="${GERRIT_PORT:-29418}" \
        bash "$source_script" "$gerrit_project" "$version" >&2; then
         set_step_result "ok" "source checkout ready"
         echo -e "${GREEN}✅ 代码切换完成${NC}"
         return 0
     else
+        source_exit=$?
+        if [[ "$source_exit" -eq 2 ]]; then
+            set_step_result "skipped_no_matching_tag" "no matching source tag found"
+            echo -e "${YELLOW}⚠️ 未找到目标 tag，当前版本将使用 AI-only 堆栈分析${NC}"
+            return 2
+        fi
         set_step_result "failed" "source checkout failed"
         echo -e "${RED}❌ 代码切换失败${NC}"
         echo -e "${YELLOW}提示：如果是 Gerrit 克隆失败，请确认是否已将 ~/.ssh/id_rsa.pub 配置到 Gerrit 的设置-\"SSH Keys\" 里面${NC}"
@@ -1009,18 +1031,18 @@ find_deb_files_for_version() {
 
     [[ -d "$dl_dir" ]] || return 0
 
+    # deb/dbgsym 本地复用必须同时匹配包名、版本号/dbgsym版本号和架构。
     find "$dl_dir" -maxdepth 1 -type f \( \
         -name "${package}_${version}_${arch_suffix}.deb" -o \
         -name "${package}_${version}-*_${arch_suffix}.deb" -o \
-        -name "${package}-${arch_suffix}_${version}_${arch_suffix}.deb" -o \
         -name "${package}_${version}-${arch_suffix}.deb" -o \
-        -name "${package}_${version}+*.deb" -o \
-        -name "${package}_${version}.*.deb" -o \
+        -name "${package}_${version}+*_${arch_suffix}.deb" -o \
+        -name "${package}_${version}.*_${arch_suffix}.deb" -o \
         -name "${package}-dbgsym_${version}_${arch_suffix}.deb" -o \
         -name "${package}-dbgsym_${version}-*_${arch_suffix}.deb" -o \
         -name "${package}-dbgsym_${version}-${arch_suffix}.deb" -o \
-        -name "${package}-dbgsym_${version}+*.deb" -o \
-        -name "${package}-dbgsym_${version}.*.deb" \
+        -name "${package}-dbgsym_${version}+*_${arch_suffix}.deb" -o \
+        -name "${package}-dbgsym_${version}.*_${arch_suffix}.deb" \
     \) 2>/dev/null
 }
 
@@ -1047,6 +1069,8 @@ analyze_crashes_for_version() {
     local package="$1"
     local version="$2"
     local filtered_csv="$3"
+    local analysis_mode="${4:-full}"
+    local ai_only_reason="${5:-}"
     local analyze_script="$SKILLS_DIR/coredump-full-analysis/scripts/analyze_crash_per_version.py"
     local dl_dir="$WORKSPACE/4.包管理/downloads"
     local skip_file="$WORKSPACE/4.包管理/downloads/skipped_versions.txt"
@@ -1063,10 +1087,12 @@ analyze_crashes_for_version() {
     local clean_version=$(echo "$version" | sed 's/^1://' | sed 's/-1$//')
 
     # 检查是否该版本被跳过（deb包不存在）
-    if [[ "$ENABLE_PACKAGE_MANAGEMENT" != "true" ]]; then
+    if [[ "$analysis_mode" == "ai-only" ]]; then
+        echo -e "${YELLOW}⚠️ AI-only 模式：跳过源码/deb/dbgsym/addr2line/objdump/git，仅基于崩溃堆栈分析 (${ai_only_reason:-fallback})${NC}"
+    elif [[ "$ENABLE_PACKAGE_MANAGEMENT" != "true" ]]; then
         echo -e "${YELLOW}⚠️ 包管理已通过配置关闭，跳过 deb/dbgsym 安装，直接分析${NC}"
     elif [[ -f "$skip_file" ]] && grep -q "^$package $clean_version" "$skip_file" 2>/dev/null; then
-        echo -e "${YELLOW}⚠️ 该版本 deb 包不存在，跳过安装，直接使用 AI 分析${NC}"
+        echo -e "${YELLOW}⚠️ 该版本 deb 包不存在，跳过安装，继续降级分析${NC}"
     else
         # 安装该版本的 deb 包（包括调试符号包 dbgsym）
         # 使用 find 避免 ls 在多文件时返回1的问题
@@ -1155,13 +1181,18 @@ expect {
     # 将脚本目录加入 PYTHONPATH，确保 enhanced_analysis 等模块可导入
     local analyze_script_dir
     analyze_script_dir="$(cd "$(dirname "$analyze_script")" && pwd)"
+    local analyze_cmd=(python3 "$analyze_script"
+        --package "$package"
+        --version "$clean_version"
+        --workspace "$WORKSPACE"
+        --max-crashes "$MAX_CRASHES"
+        --addr2line-max-frames "$ADDR2LINE_MAX_FRAMES"
+        --analysis-mode "$analysis_mode")
+    if [[ -n "$ai_only_reason" ]]; then
+        analyze_cmd+=(--ai-only-reason "$ai_only_reason")
+    fi
     PYTHONPATH="$analyze_script_dir:${PYTHONPATH:-}" \
-    python3 "$analyze_script" \
-        --package "$package" \
-        --version "$clean_version" \
-        --workspace "$WORKSPACE" \
-        --max-crashes "$MAX_CRASHES" \
-        --addr2line-max-frames "$ADDR2LINE_MAX_FRAMES" 2>&1 || true
+    "${analyze_cmd[@]}" 2>&1 || true
 
     local version_dir="${clean_version//./_}"
     version_dir="${version_dir//+/_}"
@@ -1421,6 +1452,44 @@ main() {
                 ((success_count++)) || true
             else
                 ((fail_count++)) || true
+                log_version_status "$clean_version" "source" "${STEP_STATUS:-unknown}" "${STEP_MESSAGE:-}"
+                if [[ "${STEP_STATUS:-}" == "skipped_no_matching_tag" ]]; then
+                    log_version_status "$clean_version" "package" "skipped_ai_only" "skip package download because source tag is missing"
+                    if analyze_crashes_for_version "$PACKAGE" "$clean_version" "$filtered_csv" "ai-only" "source_tag_missing"; then
+                        ((success_count++)) || true
+                    else
+                        ((fail_count++)) || true
+                    fi
+                    log_version_status "$clean_version" "analysis" "${STEP_STATUS:-unknown}" "${STEP_MESSAGE:-}"
+                    log_version_status "$clean_version" "autofix" "skipped_ai_only" "skip auto fix for AI-only analysis"
+
+                    ((processed_count++)) || true
+                    if [[ "$PROGRESS_INTERVAL" -gt 0 ]]; then
+                        local CURRENT_TIME=$(date +%s)
+                        local ELAPSED=$((CURRENT_TIME - ANALYSIS_START_TIME))
+                        local INTERVAL_PASSED=$((CURRENT_TIME - LAST_PROGRESS_TIME))
+                        if [[ $INTERVAL_PASSED -ge $PROGRESS_INTERVAL ]]; then
+                            report_progress "$ELAPSED" "$clean_version" "$processed_count" "$version_count" "$success_count" "$fail_count"
+                            LAST_PROGRESS_TIME=$CURRENT_TIME
+                        fi
+                    fi
+                    continue
+                fi
+                log_version_status "$clean_version" "package" "skipped_source_failed" "skip package download because source checkout failed"
+                log_version_status "$clean_version" "analysis" "skipped_source_failed" "skip crash analysis because source checkout failed"
+                log_version_status "$clean_version" "autofix" "skipped_source_failed" "skip auto fix because source checkout failed"
+
+                ((processed_count++)) || true
+                if [[ "$PROGRESS_INTERVAL" -gt 0 ]]; then
+                    local CURRENT_TIME=$(date +%s)
+                    local ELAPSED=$((CURRENT_TIME - ANALYSIS_START_TIME))
+                    local INTERVAL_PASSED=$((CURRENT_TIME - LAST_PROGRESS_TIME))
+                    if [[ $INTERVAL_PASSED -ge $PROGRESS_INTERVAL ]]; then
+                        report_progress "$ELAPSED" "$clean_version" "$processed_count" "$version_count" "$success_count" "$fail_count"
+                        LAST_PROGRESS_TIME=$CURRENT_TIME
+                    fi
+                fi
+                continue
             fi
             log_version_status "$clean_version" "source" "${STEP_STATUS:-unknown}" "${STEP_MESSAGE:-}"
 
@@ -1431,6 +1500,28 @@ main() {
                 ((fail_count++)) || true
             fi
             log_version_status "$clean_version" "package" "${STEP_STATUS:-unknown}" "${STEP_MESSAGE:-}"
+
+            if [[ "${STEP_STATUS:-}" == "skipped_no_matching_package" ]]; then
+                if analyze_crashes_for_version "$PACKAGE" "$clean_version" "$filtered_csv" "ai-only" "package_missing"; then
+                    ((success_count++)) || true
+                else
+                    ((fail_count++)) || true
+                fi
+                log_version_status "$clean_version" "analysis" "${STEP_STATUS:-unknown}" "${STEP_MESSAGE:-}"
+                log_version_status "$clean_version" "autofix" "skipped_ai_only" "skip auto fix for AI-only analysis"
+
+                ((processed_count++)) || true
+                if [[ "$PROGRESS_INTERVAL" -gt 0 ]]; then
+                    local CURRENT_TIME=$(date +%s)
+                    local ELAPSED=$((CURRENT_TIME - ANALYSIS_START_TIME))
+                    local INTERVAL_PASSED=$((CURRENT_TIME - LAST_PROGRESS_TIME))
+                    if [[ $INTERVAL_PASSED -ge $PROGRESS_INTERVAL ]]; then
+                        report_progress "$ELAPSED" "$clean_version" "$processed_count" "$version_count" "$success_count" "$fail_count"
+                        LAST_PROGRESS_TIME=$CURRENT_TIME
+                    fi
+                fi
+                continue
+            fi
 
             # 步骤5: 安装包并分析崩溃
             if analyze_crashes_for_version "$PACKAGE" "$clean_version" "$filtered_csv"; then

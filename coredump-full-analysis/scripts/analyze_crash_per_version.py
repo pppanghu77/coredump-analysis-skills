@@ -19,6 +19,7 @@ from package_rules import get_package_patterns
 try:
     from enhanced_analysis import (
         EnhancedAnalyzer, run_enhanced_analysis_for_version,
+        LLMStackAnalyzer,
         parse_frame_addresses, compute_offsets,
     )
     HAS_ENHANCED = True
@@ -67,6 +68,17 @@ def parse_args():
         type=int,
         default=300,
         help='addr2line 最大解析帧数（默认: 300）'
+    )
+    parser.add_argument(
+        '--analysis-mode',
+        choices=['full', 'ai-only'],
+        default='full',
+        help='分析模式：full 使用源码/deb/dbgsym增强分析；ai-only 仅基于崩溃堆栈和 LLM/规则分析'
+    )
+    parser.add_argument(
+        '--ai-only-reason',
+        default='',
+        help='AI-only 模式原因，例如 source_tag_missing 或 package_missing'
     )
 
     return parser.parse_args()
@@ -389,7 +401,139 @@ def generate_fix_suggestions(crash: Dict, package: str, version: str) -> List[st
     return suggestions
 
 
-def analyze_version(package: str, version: str, workspace: str, max_crashes: int, addr2line_max_frames: int) -> Dict:
+def extract_json_object(text: str) -> Dict:
+    """Best-effort parse of a JSON object returned by an LLM."""
+    if not text:
+        return {}
+
+    candidate = text.strip()
+    candidate = re.sub(r'^```(?:json)?\s*', '', candidate)
+    candidate = re.sub(r'\s*```$', '', candidate)
+
+    start = candidate.find('{')
+    end = candidate.rfind('}')
+    if start >= 0 and end > start:
+        candidate = candidate[start:end + 1]
+
+    try:
+        parsed = json.loads(candidate)
+        return parsed if isinstance(parsed, dict) else {}
+    except json.JSONDecodeError:
+        return {}
+
+
+def apply_ai_only_result(crash: Dict, llm_result: Dict) -> bool:
+    """Attach LLM stack-only output and cautiously improve fixability."""
+    if not llm_result or not llm_result.get('available'):
+        return False
+
+    parsed = extract_json_object(llm_result.get('analysis', ''))
+    if parsed:
+        crash['llm_root_cause'] = parsed.get('root_cause') or ''
+        crash['llm_crash_type'] = parsed.get('crash_type') or ''
+        crash['llm_suggested_fix'] = parsed.get('fix_suggestion') or ''
+        crash['llm_confidence'] = str(parsed.get('confidence') or '').lower()
+        crash['llm_reasoning'] = parsed.get('reasoning') or ''
+    else:
+        crash['llm_raw_analysis'] = llm_result.get('analysis', '')
+        crash['llm_confidence'] = 'low'
+
+    confidence = crash.get('llm_confidence', '')
+    suggested_fix = crash.get('llm_suggested_fix', '')
+    if (
+        crash.get('fixable') == 'uncertain'
+        and confidence in ('high', 'medium')
+        and suggested_fix
+    ):
+        crash['fixable'] = True
+        crash['fix_reason'] = crash.get('llm_root_cause') or 'AI-only 堆栈分析认为可修复'
+        crash['fix_type'] = suggested_fix
+        crash['fix_code'] = None
+        crash['fix_confidence'] = confidence
+        crash['pattern_name'] = 'ai_only_llm'
+        return True
+
+    return False
+
+
+def run_ai_only_analysis_for_version(crashes: List[Dict], reason: str) -> Tuple[List[Dict], Dict]:
+    """Run stack-only AI analysis without source, deb/dbgsym, addr2line, objdump or git."""
+    results = []
+    stats = {
+        'mode': 'ai-only',
+        'total': len(crashes),
+        'addr2line_resolved': 0,
+        'addr2line_partial': 0,
+        'source_found': 0,
+        'git_available': 0,
+        'objdump_available': 0,
+        'llm_analyzed': 0,
+        'fixability_improved': 0,
+    }
+
+    llm = LLMStackAnalyzer() if HAS_ENHANCED else None
+    unavailable_reason = 'enhanced_analysis unavailable' if not HAS_ENHANCED else ''
+
+    for crash in crashes:
+        degradation_reasons = ['ai_only_mode']
+        if reason:
+            degradation_reasons.append(reason)
+
+        if crash.get('pattern_name') == 'app_frame_detected':
+            crash['fixable'] = 'uncertain'
+            crash['fix_reason'] = 'AI-only 模式仅命中应用层关键帧，未使用源码/deb/dbgsym，需人工判断或等待 LLM 结论'
+            crash['fix_type'] = None
+            crash['fix_code'] = None
+            crash['fix_confidence'] = 'low'
+
+        if llm:
+            llm_result = llm.analyze(crash, [], [])
+        else:
+            llm_result = {'available': False, 'reason': unavailable_reason}
+
+        if llm_result.get('available'):
+            stats['llm_analyzed'] += 1
+        else:
+            degradation_reasons.append('llm_analysis_unavailable')
+
+        improved = apply_ai_only_result(crash, llm_result)
+        if improved:
+            stats['fixability_improved'] += 1
+
+        enhanced = {
+            'ai_only': True,
+            'analysis_mode': 'ai-only',
+            'ai_only_reason': reason,
+            'addr2line': [],
+            'source_context': [],
+            'git_analysis': [],
+            'objdump': None,
+            'debuginfod': None,
+            'llm_analysis': llm_result,
+            'improved_fixability': {
+                'resolved': improved,
+                'method': 'ai_only_llm' if improved else None,
+            },
+            'degradation_reasons': sorted(set(degradation_reasons)),
+        }
+        crash['analysis_mode'] = 'ai-only'
+        crash['ai_only_reason'] = reason
+        crash['enhanced'] = enhanced
+        crash['enhanced_degradation_reasons'] = enhanced['degradation_reasons']
+        results.append(enhanced)
+
+    return results, stats
+
+
+def analyze_version(
+    package: str,
+    version: str,
+    workspace: str,
+    max_crashes: int,
+    addr2line_max_frames: int,
+    analysis_mode: str = 'full',
+    ai_only_reason: str = '',
+) -> Dict:
     """分析指定版本的所有崩溃"""
     version_clean = clean_version(version)
     version_dir = version_clean.replace('.', '_').replace('+', '_').replace('-', '_')
@@ -434,12 +578,26 @@ def analyze_version(package: str, version: str, workspace: str, max_crashes: int
 
     # 限制分析的崩溃数量
     analyzed_crashes = crashes if max_crashes <= 0 else crashes[:max_crashes]
+    analysis_mode = (analysis_mode or 'full').replace('_', '-')
+    if analysis_mode not in ('full', 'ai-only'):
+        analysis_mode = 'full'
+
+    total_fixable = sum(1 for c in analyzed_crashes if c['fixable'] is True)
+    total_non_fixable = sum(1 for c in analyzed_crashes if c['fixable'] is False)
+    total_uncertain = sum(1 for c in analyzed_crashes if c['fixable'] == 'uncertain')
 
     # ═══════════════════════════════════════════════════════════════════
     # 增强分析: addr2line + objdump + git blame + LLM + debuginfod
     # ═══════════════════════════════════════════════════════════════════
     enhanced_stats = {}
-    if HAS_ENHANCED:
+    if analysis_mode == 'ai-only':
+        reason_label = ai_only_reason or 'fallback'
+        print(f"🤖 运行 AI-only 堆栈分析 ({reason_label}) ...")
+        _, enhanced_stats = run_ai_only_analysis_for_version(analyzed_crashes, reason_label)
+        total_fixable = sum(1 for c in analyzed_crashes if c['fixable'] is True)
+        total_non_fixable = sum(1 for c in analyzed_crashes if c['fixable'] is False)
+        total_uncertain = sum(1 for c in analyzed_crashes if c['fixable'] == 'uncertain')
+    elif HAS_ENHANCED:
         print(f"🔧 运行增强分析 (addr2line / objdump / git blame / LLM / debuginfod) ...")
         enhanced_results, enhanced_stats = run_enhanced_analysis_for_version(
             analyzed_crashes, workspace, package, version_clean,
@@ -502,6 +660,8 @@ def analyze_version(package: str, version: str, workspace: str, max_crashes: int
         'version': version,
         'version_clean': version_clean,
         'version_dir': version_dir,
+        'analysis_mode': analysis_mode,
+        'ai_only_reason': ai_only_reason if analysis_mode == 'ai-only' else '',
         'analysis_time': datetime.now().isoformat(),
         'version_stats': version_stats,
         'summary': {
@@ -544,6 +704,9 @@ def save_markdown_report(analysis: Dict, output_file: Path):
         f.write(f"**分析时间**: {analysis['analysis_time']}\n\n")
         f.write(f"**包名**: {analysis['package']}\n\n")
         f.write(f"**版本**: {analysis['version']}\n\n")
+        f.write(f"**分析模式**: {analysis.get('analysis_mode', 'full')}\n\n")
+        if analysis.get('analysis_mode') == 'ai-only':
+            f.write(f"**AI-only原因**: {analysis.get('ai_only_reason') or 'fallback'}\n\n")
 
         # 摘要
         f.write("## 摘要\n\n")
@@ -557,7 +720,10 @@ def save_markdown_report(analysis: Dict, output_file: Path):
         # 增强分析统计
         estats = analysis.get('enhanced_stats', {})
         if estats:
-            f.write("**增强分析**:\n")
+            if analysis.get('analysis_mode') == 'ai-only':
+                f.write("**AI-only分析**:\n")
+            else:
+                f.write("**增强分析**:\n")
             f.write(f"- addr2line 完全解析: {estats.get('addr2line_resolved', 0)}\n")
             f.write(f"- addr2line 部分解析(函数名): {estats.get('addr2line_partial', 0)}\n")
             f.write(f"- 源码上下文获取: {estats.get('source_found', 0)}\n")
@@ -612,20 +778,21 @@ def save_markdown_report(analysis: Dict, output_file: Path):
             if crash['key_frame']:
                 f.write(f"- **关键帧**: 帧 #{crash['key_frame']['index']} `{crash['key_frame']['symbol']}` in `{crash['key_frame']['library']}`\n")
 
-            # GDB命令
-            gdb_cmds = generate_gdb_commands(crash)
-            if gdb_cmds:
-                f.write(f"\n**调试命令**:\n```bash\n")
-                for cmd in gdb_cmds:
-                    f.write(f"{cmd}\n")
-                f.write("```\n")
+            if analysis.get('analysis_mode') != 'ai-only':
+                # GDB命令
+                gdb_cmds = generate_gdb_commands(crash)
+                if gdb_cmds:
+                    f.write(f"\n**调试命令**:\n```bash\n")
+                    for cmd in gdb_cmds:
+                        f.write(f"{cmd}\n")
+                    f.write("```\n")
 
-            addr2line_cmds = generate_addr2line_commands(crash)
-            if addr2line_cmds:
-                f.write(f"\n**addr2line 命令**:\n```bash\n")
-                for cmd in addr2line_cmds:
-                    f.write(f"{cmd}\n")
-                f.write("```\n")
+                addr2line_cmds = generate_addr2line_commands(crash)
+                if addr2line_cmds:
+                    f.write(f"\n**addr2line 命令**:\n```bash\n")
+                    for cmd in addr2line_cmds:
+                        f.write(f"{cmd}\n")
+                    f.write("```\n")
 
             # ═══ Enhanced analysis results ═══
             enhanced = crash.get('enhanced', {})
@@ -733,6 +900,9 @@ def main():
     print(f"包名: {args.package}")
     print(f"版本: {args.version}")
     print(f"工作目录: {args.workspace}")
+    print(f"分析模式: {args.analysis_mode}")
+    if args.analysis_mode == 'ai-only':
+        print(f"AI-only原因: {args.ai_only_reason or 'fallback'}")
     print()
 
     # 分析版本
@@ -742,6 +912,8 @@ def main():
         args.workspace,
         args.max_crashes,
         args.addr2line_max_frames,
+        args.analysis_mode,
+        args.ai_only_reason,
     )
 
     if 'error' in analysis:
@@ -773,7 +945,10 @@ def main():
     # 增强分析统计
     estats = analysis.get('enhanced_stats', {})
     if estats:
-        print(f"=== 增强分析 ===")
+        if analysis.get('analysis_mode') == 'ai-only':
+            print(f"=== AI-only分析 ===")
+        else:
+            print(f"=== 增强分析 ===")
         print(f"addr2line: {estats.get('addr2line_resolved', 0)}/{estats.get('total', 0)} resolved")
         print(f"Source: {estats.get('source_found', 0)} found")
         print(f"Git: {estats.get('git_available', 0)} analyzed")

@@ -727,7 +727,12 @@ class LLMStackAnalyzer:
         self.api_key = self.config.get('api_key') or os.environ.get(
             'OPENAI_API_KEY', ''
         )
-        self.api_base = self.config.get('api_base', '').rstrip('/')
+        self.api_base = (
+            self.config.get('api_base')
+            or os.environ.get('OPENAI_BASE_URL')
+            or os.environ.get('OPENAI_API_BASE')
+            or 'https://api.openai.com/v1'
+        ).rstrip('/')
         self.model = self.config.get('model', 'gpt-4o-mini')
         self.enabled = bool(self.api_key and self.api_base)
 

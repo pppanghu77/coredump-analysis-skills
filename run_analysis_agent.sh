@@ -408,7 +408,7 @@ parse_packages_file() {
 # 获取包的分支
 get_package_branch() {
     local pkg="$1"
-    echo "${PACKAGE_BRANCH_MAP[$pkg]:-origin/$DEFAULT_TARGET_BRANCH}"
+    echo "${PACKAGE_BRANCH_MAP[$pkg]:-$DEFAULT_TARGET_BRANCH}"
 }
 
 # 获取包对应的 Gerrit 项目名
@@ -473,7 +473,7 @@ has_non_default_mapping() {
         local_branch=$(get_package_branch "$pkg")
         local_project=$(get_package_project "$pkg")
         local_download_name=$(get_package_data_download_name "$pkg")
-        if [[ "$local_branch" != "origin/$DEFAULT_TARGET_BRANCH" || "$local_project" != "$pkg" || "$local_download_name" != "$pkg" ]]; then
+        if [[ "$local_branch" != "$DEFAULT_TARGET_BRANCH" || "$local_project" != "$pkg" || "$local_download_name" != "$pkg" ]]; then
             return 0
         fi
     done
@@ -492,7 +492,7 @@ print_non_default_mappings() {
         local_branch=$(get_package_branch "$pkg")
         local_project=$(get_package_project "$pkg")
         local_download_name=$(get_package_data_download_name "$pkg")
-        if [[ "$local_branch" != "origin/$DEFAULT_TARGET_BRANCH" || "$local_project" != "$pkg" || "$local_download_name" != "$pkg" ]]; then
+        if [[ "$local_branch" != "$DEFAULT_TARGET_BRANCH" || "$local_project" != "$pkg" || "$local_download_name" != "$pkg" ]]; then
             echo -e "  ${pkg} → 项目:${local_project}, 数据下载:${local_download_name}, 分支:${local_branch}"
         fi
     done

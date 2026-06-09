@@ -21,11 +21,11 @@
     "enable_local_reuse": true,
     "enable_local_reuse_comment": "本地复用总开关。true 时启用源码和包复用；false 时完全使用原有代码管理和包管理下载逻辑。",
     "reuse_source_code": true,
-    "reuse_source_code_comment": "控制是否复用历史 workspace 中的 3.代码管理 源码目录。找到相同 Gerrit 项目且版本匹配的 git 仓库时复制到当前 workspace。",
+    "reuse_source_code_comment": "控制是否复用历史 workspace 中的 3.代码管理 源码目录。找到相同 Gerrit 项目的 git 仓库时复制到当前 workspace；若当前 HEAD 不在分析版本 tag 上，随后会执行 tag checkout/reset；目标 tag 缺失时该版本跳过源码/deb路径并进入 AI-only 堆栈分析。",
     "reuse_deb_packages": true,
-    "reuse_deb_packages_comment": "控制是否复用历史 workspace 中的 4.包管理/downloads deb/dbgsym 包。找到相同包名、版本、架构的 deb/dbgsym 文件时复制到当前 workspace。",
+    "reuse_deb_packages_comment": "控制是否复用历史 workspace 中的 4.包管理/downloads deb/dbgsym 包。找到包名、版本号/dbgsym版本号和架构一致的 deb/dbgsym 文件时复制到当前 workspace。",
     "workspace_search_root": "",
-    "workspace_search_root_comment": "历史 workspace 搜索根目录。为空时默认使用 $SKILLS_DIR，扫描其下的 coredump-workspace-* 目录。",
+    "workspace_search_root_comment": "历史 workspace 搜索根目录。为空时默认扫描当前 WORKSPACE 所在父目录（通常是 $HOME 或 accounts.json paths.workspace），扫描其下的 coredump-workspace-* 目录。",
     "max_workspace_scan": 20,
     "max_workspace_scan_comment": "最多扫描最近 N 个历史 workspace，按目录修改时间倒序扫描，避免 workspace 过多导致分析启动变慢。"
   }

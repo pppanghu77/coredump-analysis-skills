@@ -50,9 +50,10 @@ Important defaults:
 - `analysis.max_crashes` controls the per-version crash count depth; default `0` means all deduplicated crashes.
 - `analysis.addr2line_max_frames` controls enhanced addr2line frame depth; default `500`.
 - `reuse.enable_local_reuse` is enabled by default. Step 3/4 first search recent local `coredump-workspace-*` directories for reusable source and deb/dbgsym data, then fall back to clone/download only when no matching data is found.
-- `reuse.reuse_source_code` reuses matching `3.代码管理/<gerrit_project>` git repos when `git describe --tags --exact-match` equals the crash version.
-- `reuse.reuse_deb_packages` reuses matching `4.包管理/downloads` deb/dbgsym files for the same package, cleaned version, and architecture.
-- `reuse.workspace_search_root` defaults to `$SKILLS_DIR`; `reuse.max_workspace_scan` defaults to `20` and scans newest workspaces first.
+- `reuse.reuse_source_code` reuses matching `3.代码管理/<gerrit_project>` git repos by Gerrit project name; if HEAD is not already at the target tag, it fetches tags and checks out/resets to the current crash version. Missing target tags skip source/deb paths and run that version in AI-only stack-analysis mode.
+- Missing matching deb/dbgsym packages also run the version in AI-only mode, without installing deb packages or using addr2line/objdump/git/source enhancement.
+- `reuse.reuse_deb_packages` reuses matching `4.包管理/downloads` deb/dbgsym files by package name, cleaned version/dbgsym version, and architecture.
+- `reuse.workspace_search_root` defaults to the current `$WORKSPACE` parent directory (normally `$HOME` or `accounts.json` `paths.workspace`), not `$SKILLS_DIR`; `reuse.max_workspace_scan` defaults to `20` and scans newest workspaces first.
 - CLI/env still override config: `--max-crashes`, `--addr2line-max-frames`, `MAX_CRASHES`, `ADDR2LINE_MAX_FRAMES`.
 - Lower-level `analyze_crash_complete.sh` accepts `--data-download-name`; use this only when the data download key intentionally differs from the package being filtered/analyzed.
 
