@@ -952,6 +952,7 @@ download_packages_for_version() {
 
     # 检查当前 workspace 是否已有该版本的deb包
     if [[ -n "$(find_deb_files_for_version "$dl_dir" "$package" "$clean_version" "$ARCH")" ]]; then
+        clear_skipped_version_entry "$skipped_versions_file" "$package" "$clean_version" || true
         echo -e "${GREEN}✅ $package $clean_version 的deb包已存在，跳过下载${NC}"
         set_step_result "ok" "deb packages already exist"
         return 0
@@ -968,6 +969,7 @@ download_packages_for_version() {
             local copied_count
             if copied_count=$(copy_reusable_deb_files "$reusable_deb_files" "$dl_dir"); then
                 if [[ -n "$(find_deb_files_for_version "$dl_dir" "$package" "$clean_version" "$ARCH")" ]]; then
+                    clear_skipped_version_entry "$skipped_versions_file" "$package" "$clean_version" || true
                     echo -e "${GREEN}✅ 复用 deb/dbgsym 文件 ${copied_count} 个，来源: $source_dir${NC}"
                     set_step_result "ok" "deb packages reused from local workspace: $source_dir"
                     return 0
@@ -994,6 +996,7 @@ download_packages_for_version() {
     #   pkg_1.2.3_arm64.deb / pkg_1.2.3-1_arm64.deb
     #   pkg_1.2.3+build_arm64.deb / pkg_1.2.3.1-1_arm64.deb
     if [[ -d "$dl_dir" ]] && [[ -n "$(find_deb_files_for_version "$dl_dir" "$package" "$clean_version" "$ARCH")" ]]; then
+        clear_skipped_version_entry "$skipped_versions_file" "$package" "$clean_version" || true
         echo -e "${GREEN}✅ 包下载完成${NC}"
         set_step_result "ok" "deb packages downloaded"
         return 0
@@ -1044,6 +1047,36 @@ find_deb_files_for_version() {
         -name "${package}-dbgsym_${version}+*_${arch_suffix}.deb" -o \
         -name "${package}-dbgsym_${version}.*_${arch_suffix}.deb" \
     \) 2>/dev/null
+}
+
+version_in_skipped_file() {
+    local skip_file="$1"
+    local package="$2"
+    local clean_version="$3"
+
+    [[ -f "$skip_file" ]] || return 1
+    awk -v pkg="$package" -v ver="$clean_version" '
+        NF >= 2 && $1 == pkg && $2 == ver { found = 1; exit }
+        END { exit(found ? 0 : 1) }
+    ' "$skip_file"
+}
+
+clear_skipped_version_entry() {
+    local skip_file="$1"
+    local package="$2"
+    local clean_version="$3"
+    local tmp_file=""
+
+    [[ -f "$skip_file" ]] || return 0
+
+    tmp_file=$(mktemp "${TMPDIR:-/tmp}/coredump-skipped-version.XXXXXX") || return 1
+    awk -v pkg="$package" -v ver="$clean_version" '
+        !(NF >= 2 && $1 == pkg && $2 == ver)
+    ' "$skip_file" > "$tmp_file" || {
+        rm -f "$tmp_file"
+        return 1
+    }
+    mv "$tmp_file" "$skip_file"
 }
 
 run_dpkg_install_locked() {
@@ -1166,7 +1199,7 @@ analyze_crashes_for_version() {
         effective_analysis_mode="degraded-full"
         effective_degraded_reason="package_management_disabled"
         echo -e "${YELLOW}⚠️ 包管理已通过配置关闭，进入降级增强分析${NC}"
-    elif [[ -f "$skip_file" ]] && grep -q "^$package $clean_version" "$skip_file" 2>/dev/null; then
+    elif version_in_skipped_file "$skip_file" "$package" "$clean_version"; then
         effective_analysis_mode="degraded-full"
         effective_degraded_reason="package_marked_missing"
         echo -e "${YELLOW}⚠️ 该版本 deb 包已标记缺失，进入降级增强分析${NC}"
