@@ -169,7 +169,10 @@ def aggregate_statistics(versions: List[Dict]) -> Dict:
 
     # 按信号类型汇总
     signal_counts = {}
+    analysis_mode_counts = {}
     for version in versions:
+        analysis_mode = version.get('analysis_mode', 'full')
+        analysis_mode_counts[analysis_mode] = analysis_mode_counts.get(analysis_mode, 0) + 1
         for signal, count in version.get('by_signal', {}).items():
             signal_counts[signal] = signal_counts.get(signal, 0) + count
 
@@ -181,7 +184,8 @@ def aggregate_statistics(versions: List[Dict]) -> Dict:
         'total_non_fixable': total_non_fixable,
         'total_uncertain': total_uncertain,
         'overall_fix_rate': round(fix_rate, 1),
-        'by_signal': signal_counts
+        'by_signal': signal_counts,
+        'analysis_mode_counts': analysis_mode_counts,
     }
 
 
@@ -213,6 +217,11 @@ def generate_markdown_report(package: str, versions: List[Dict], version_list: L
         f.write(f"- **不可修复崩溃**: {stats['total_non_fixable']}\n")
         f.write(f"- **需人工判断**: {stats['total_uncertain']}\n")
         f.write(f"- **整体修复率**: {stats['overall_fix_rate']}%\n\n")
+        if stats.get('analysis_mode_counts'):
+            f.write("- **分析模式分布**:\n")
+            for mode, count in sorted(stats['analysis_mode_counts'].items()):
+                f.write(f"  - {mode}: {count}\n")
+            f.write("\n")
 
         # 趋势分析
         f.write("### 趋势分析\n\n")
@@ -250,12 +259,13 @@ def generate_markdown_report(package: str, versions: List[Dict], version_list: L
 
         # 版本详细分析
         f.write("## 版本分析结果\n\n")
-        f.write("| 版本 | 唯一崩溃 | 总次数 | 可修复 | 不可修复 | 需人工判断 | 修复率 |\n")
-        f.write("|------|---------|--------|--------|----------|------------|--------|\n")
+        f.write("| 版本 | 模式 | 唯一崩溃 | 总次数 | 可修复 | 不可修复 | 需人工判断 | 修复率 |\n")
+        f.write("|------|------|---------|--------|--------|----------|------------|--------|\n")
 
         for version in sorted(versions, key=lambda v: v.get('version', '')):
             summary = version.get('summary', {})
             f.write(f"| {version['version']} | ")
+            f.write(f"{version.get('analysis_mode', 'full')} | ")
             f.write(f"{summary.get('unique_crashes', 0)} | ")
             f.write(f"{summary.get('total_crash_records', 0)} | ")
             f.write(f"{summary.get('fixable_count', 0)} | ")
@@ -387,6 +397,9 @@ def generate_json_summary(package: str, versions: List[Dict], version_list: List
         version_summaries.append({
             'version': version.get('version'),
             'version_clean': version.get('version_clean'),
+            'analysis_mode': version.get('analysis_mode', 'full'),
+            'ai_only_reason': version.get('ai_only_reason', ''),
+            'degraded_reason': version.get('degraded_reason', ''),
             'unique_crashes': version.get('summary', {}).get('unique_crashes', 0),
             'total_crash_records': version.get('summary', {}).get('total_crash_records', 0),
             'fixable_count': version.get('summary', {}).get('fixable_count', 0),

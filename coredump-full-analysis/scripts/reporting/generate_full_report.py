@@ -44,6 +44,10 @@ def main():
     total_fixable = sum(v['data']['summary'].get('fixable_count', 0) for v in all_versions)
     total_uncertain = sum(v['data']['summary'].get('uncertain_count', 0) for v in all_versions)
     total_non_fixable = sum(v['data']['summary'].get('non_fixable_count', 0) for v in all_versions)
+    mode_counts = {}
+    for v in all_versions:
+        mode = v['data'].get('analysis_mode', 'full')
+        mode_counts[mode] = mode_counts.get(mode, 0) + 1
 
     signal_stats = {}
     for v in all_versions:
@@ -61,6 +65,14 @@ def main():
     lines.append(f"| 需人工判断 | {total_uncertain} |")
     lines.append("")
 
+    if mode_counts:
+        lines.append("### 分析模式统计\n")
+        lines.append(f"| 模式 | 版本数 |")
+        lines.append(f"|------|--------|")
+        for mode, count in sorted(mode_counts.items()):
+            lines.append(f"| {mode} | {count} |")
+        lines.append("")
+
     if signal_stats:
         lines.append("### 按信号类型统计\n")
         lines.append(f"| 信号 | 次数 | 说明 |")
@@ -73,11 +85,11 @@ def main():
 
     # 版本统计表
     lines.append("## 版本崩溃统计\n")
-    lines.append(f"| 版本 | 唯一崩溃 | 总次数 | 可修复 | 不可修复 | 需人工判断 |")
-    lines.append(f"|------|---------|--------|--------|----------|------------|")
+    lines.append(f"| 版本 | 模式 | 唯一崩溃 | 总次数 | 可修复 | 不可修复 | 需人工判断 |")
+    lines.append(f"|------|------|---------|--------|--------|----------|------------|")
     for v in all_versions:
         s = v['data']['summary']
-        lines.append(f"| {v['version']} | {s.get('unique_crashes', '?')} | {s.get('total_crash_records', '?')} | {s.get('fixable_count', 0)} | {s.get('non_fixable_count', 0)} | {s.get('uncertain_count', '?')} |")
+        lines.append(f"| {v['version']} | {v['data'].get('analysis_mode', 'full')} | {s.get('unique_crashes', '?')} | {s.get('total_crash_records', '?')} | {s.get('fixable_count', 0)} | {s.get('non_fixable_count', 0)} | {s.get('uncertain_count', '?')} |")
     lines.append("")
 
     # 详细崩溃

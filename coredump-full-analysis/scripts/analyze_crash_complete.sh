@@ -1046,6 +1046,75 @@ find_deb_files_for_version() {
     \) 2>/dev/null
 }
 
+run_dpkg_install_locked() {
+    local deb_file="$1"
+    local lock_file="${TMPDIR:-/tmp}/coredump-dpkg-install.lock"
+
+    if command -v flock >/dev/null 2>&1; then
+        (
+            flock 9
+            if [[ -n "$SUDO_PASSWORD" && "$SUDO_PASSWORD" != "null" && "$SUDO_PASSWORD" != "在此处输入"* ]]; then
+                expect -c "
+set deb_file \"$deb_file\"
+set sudo_pass \"$SUDO_PASSWORD\"
+spawn sudo dpkg -i \$deb_file
+expect {
+    -re \"(password|请输入密码)\" {
+        send \"\$sudo_pass\r\"
+        expect eof
+    }
+    eof {
+        exit 0
+    }
+}
+" 2>&1 || true
+            else
+                sudo -n dpkg -i "$deb_file" 2>&1 || true
+            fi
+        ) 9>"$lock_file"
+    else
+        if [[ -n "$SUDO_PASSWORD" && "$SUDO_PASSWORD" != "null" && "$SUDO_PASSWORD" != "在此处输入"* ]]; then
+            expect -c "
+set deb_file \"$deb_file\"
+set sudo_pass \"$SUDO_PASSWORD\"
+spawn sudo dpkg -i \$deb_file
+expect {
+    -re \"(password|请输入密码)\" {
+        send \"\$sudo_pass\r\"
+        expect eof
+    }
+    eof {
+        exit 0
+    }
+}
+" 2>&1 || true
+        else
+            sudo -n dpkg -i "$deb_file" 2>&1 || true
+        fi
+    fi
+}
+
+verify_installed_deb_files() {
+    local deb_files="$1"
+    local deb_file=""
+    local pkg_name=""
+    local pkg_version=""
+    local status_line=""
+
+    while IFS= read -r deb_file; do
+        [[ -n "$deb_file" && -f "$deb_file" ]] || continue
+        pkg_name=$(dpkg-deb -f "$deb_file" Package 2>/dev/null || true)
+        pkg_version=$(dpkg-deb -f "$deb_file" Version 2>/dev/null || true)
+        [[ -n "$pkg_name" && -n "$pkg_version" ]] || return 1
+
+        status_line=$(dpkg-query -W -f='${Status}\t${Version}\n' "$pkg_name" 2>/dev/null || true)
+        [[ "$status_line" == *"install ok installed"* ]] || return 1
+        [[ "$status_line" == *$'\t'"$pkg_version" ]] || return 1
+    done <<< "$deb_files"
+
+    return 0
+}
+
 split_deb_files_for_install() {
     local deb_files="$1"
     local main_files=""
@@ -1070,10 +1139,13 @@ analyze_crashes_for_version() {
     local version="$2"
     local filtered_csv="$3"
     local analysis_mode="${4:-full}"
-    local ai_only_reason="${5:-}"
+    local analysis_reason="${5:-}"
     local analyze_script="$SKILLS_DIR/coredump-full-analysis/scripts/analyze_crash_per_version.py"
     local dl_dir="$WORKSPACE/4.包管理/downloads"
     local skip_file="$WORKSPACE/4.包管理/downloads/skipped_versions.txt"
+    local effective_analysis_mode="$analysis_mode"
+    local effective_ai_only_reason=""
+    local effective_degraded_reason=""
 
     if [[ ! -f "$analyze_script" ]]; then
         echo -e "${RED}错误: 分析脚本不存在: $analyze_script${NC}" >&2
@@ -1088,11 +1160,16 @@ analyze_crashes_for_version() {
 
     # 检查是否该版本被跳过（deb包不存在）
     if [[ "$analysis_mode" == "ai-only" ]]; then
-        echo -e "${YELLOW}⚠️ AI-only 模式：跳过源码/deb/dbgsym/addr2line/objdump/git，仅基于崩溃堆栈分析 (${ai_only_reason:-fallback})${NC}"
+        effective_ai_only_reason="$analysis_reason"
+        echo -e "${YELLOW}⚠️ AI-only 模式：跳过源码/deb/dbgsym/addr2line/objdump/git，仅基于崩溃堆栈分析 (${effective_ai_only_reason:-fallback})${NC}"
     elif [[ "$ENABLE_PACKAGE_MANAGEMENT" != "true" ]]; then
-        echo -e "${YELLOW}⚠️ 包管理已通过配置关闭，跳过 deb/dbgsym 安装，直接分析${NC}"
+        effective_analysis_mode="degraded-full"
+        effective_degraded_reason="package_management_disabled"
+        echo -e "${YELLOW}⚠️ 包管理已通过配置关闭，进入降级增强分析${NC}"
     elif [[ -f "$skip_file" ]] && grep -q "^$package $clean_version" "$skip_file" 2>/dev/null; then
-        echo -e "${YELLOW}⚠️ 该版本 deb 包不存在，跳过安装，继续降级分析${NC}"
+        effective_analysis_mode="degraded-full"
+        effective_degraded_reason="package_marked_missing"
+        echo -e "${YELLOW}⚠️ 该版本 deb 包已标记缺失，进入降级增强分析${NC}"
     else
         # 安装该版本的 deb 包（包括调试符号包 dbgsym）
         # 使用 find 避免 ls 在多文件时返回1的问题
@@ -1100,15 +1177,14 @@ analyze_crashes_for_version() {
             local deb_files=$(find_deb_files_for_version "$dl_dir" "$package" "$clean_version" "$ARCH" || true)
             if [[ -n "$deb_files" ]]; then
                 local can_install=false
-                local use_expect=false
                 local split_output=""
                 local main_deb_files=""
                 local dbgsym_deb_files=""
                 local deb_file=""
+                local install_verified=false
 
                 if [[ -n "$SUDO_PASSWORD" && "$SUDO_PASSWORD" != "null" && "$SUDO_PASSWORD" != "在此处输入"* ]]; then
                     can_install=true
-                    use_expect=true
                 elif can_install_deb_packages; then
                     can_install=true
                 fi
@@ -1123,26 +1199,7 @@ analyze_crashes_for_version() {
                         [[ -z "$deb_file" ]] && continue
                         if [[ -f "$deb_file" ]]; then
                             echo -e "  安装: $(basename "$deb_file")${NC}"
-                            if [[ "$use_expect" == "true" ]]; then
-                                # 使用 expect 自动输入密码，避免 sudo requiretty 问题
-                                # 匹配中英文密码提示: "password" 或 "请输入密码"
-                                expect -c "
-set deb_file \"$deb_file\"
-set sudo_pass \"$SUDO_PASSWORD\"
-spawn sudo dpkg -i \$deb_file
-expect {
-    -re \"(password|请输入密码)\" {
-        send \"\$sudo_pass\r\"
-        expect eof
-    }
-    eof {
-        exit 0
-    }
-}
-" 2>&1 || true
-                            else
-                                sudo -n dpkg -i "$deb_file" 2>&1 || true
-                            fi
+                            run_dpkg_install_locked "$deb_file"
                         fi
                     done <<< "$main_deb_files"
 
@@ -1150,31 +1207,35 @@ expect {
                         [[ -z "$deb_file" ]] && continue
                         if [[ -f "$deb_file" ]]; then
                             echo -e "  安装: $(basename "$deb_file")${NC}"
-                            if [[ "$use_expect" == "true" ]]; then
-                                expect -c "
-set deb_file \"$deb_file\"
-set sudo_pass \"$SUDO_PASSWORD\"
-spawn sudo dpkg -i \$deb_file
-expect {
-    -re \"(password|请输入密码)\" {
-        send \"\$sudo_pass\r\"
-        expect eof
-    }
-    eof {
-        exit 0
-    }
-}
-" 2>&1 || true
-                            else
-                                sudo -n dpkg -i "$deb_file" 2>&1 || true
-                            fi
+                            run_dpkg_install_locked "$deb_file"
                         fi
                     done <<< "$dbgsym_deb_files"
+
+                    if verify_installed_deb_files "$deb_files"; then
+                        install_verified=true
+                        echo -e "${GREEN}✅ deb/dbgsym 安装校验通过${NC}"
+                    fi
                 else
-                    echo -e "${YELLOW}⚠️ 未配置 sudo 密码且当前用户无免密 sudo，跳过 deb 安装${NC}"
+                    echo -e "${YELLOW}⚠️ 未配置 sudo 密码且当前用户无免密 sudo，无法安装 deb，进入降级增强分析${NC}"
+                    effective_analysis_mode="degraded-full"
+                    effective_degraded_reason="package_install_unavailable"
                 fi
+
+                if [[ "$can_install" == "true" && "$install_verified" != "true" ]]; then
+                    echo -e "${YELLOW}⚠️ deb/dbgsym 安装未通过校验，进入降级增强分析${NC}"
+                    effective_analysis_mode="degraded-full"
+                    effective_degraded_reason="package_install_failed"
+                fi
+            else
+                effective_analysis_mode="degraded-full"
+                effective_degraded_reason="package_files_missing"
+                echo -e "${YELLOW}⚠️ 当前 workspace 未找到可安装 deb 文件，进入降级增强分析${NC}"
             fi
         fi
+    fi
+
+    if [[ "$effective_analysis_mode" == "degraded-full" ]]; then
+        echo -e "${YELLOW}⚠️ 降级增强分析：保留规则/addr2line/git/LLM 路径，但标记为安装失败降级 (${effective_degraded_reason:-fallback})${NC}"
     fi
 
     # 执行分析（使用 analyze_crash_per_version.py 保存 JSON 报告）
@@ -1187,9 +1248,12 @@ expect {
         --workspace "$WORKSPACE"
         --max-crashes "$MAX_CRASHES"
         --addr2line-max-frames "$ADDR2LINE_MAX_FRAMES"
-        --analysis-mode "$analysis_mode")
-    if [[ -n "$ai_only_reason" ]]; then
-        analyze_cmd+=(--ai-only-reason "$ai_only_reason")
+        --analysis-mode "$effective_analysis_mode")
+    if [[ -n "$effective_ai_only_reason" ]]; then
+        analyze_cmd+=(--ai-only-reason "$effective_ai_only_reason")
+    fi
+    if [[ -n "$effective_degraded_reason" ]]; then
+        analyze_cmd+=(--degraded-reason "$effective_degraded_reason")
     fi
     PYTHONPATH="$analyze_script_dir:${PYTHONPATH:-}" \
     "${analyze_cmd[@]}" 2>&1 || true
@@ -1200,7 +1264,7 @@ expect {
     local analysis_json="$WORKSPACE/5.崩溃分析/$package/version_${version_dir}/analysis.json"
 
     if [[ -f "$analysis_json" ]]; then
-        set_step_result "ok" "analysis.json generated"
+        set_step_result "ok" "analysis.json generated (mode=${effective_analysis_mode})"
         echo -e "${GREEN}✅ 版本 $version 分析完成${NC}"
         return 0
     fi

@@ -71,14 +71,19 @@ def parse_args():
     )
     parser.add_argument(
         '--analysis-mode',
-        choices=['full', 'ai-only'],
+        choices=['full', 'degraded-full', 'ai-only'],
         default='full',
-        help='分析模式：full 使用源码/deb/dbgsym增强分析；ai-only 仅基于崩溃堆栈和 LLM/规则分析'
+        help='分析模式：full 使用源码/deb/dbgsym增强分析；degraded-full 表示资源存在但安装/环境未满足；ai-only 仅基于崩溃堆栈和 LLM/规则分析'
     )
     parser.add_argument(
         '--ai-only-reason',
         default='',
         help='AI-only 模式原因，例如 source_tag_missing 或 package_missing'
+    )
+    parser.add_argument(
+        '--degraded-reason',
+        default='',
+        help='degraded-full 模式原因，例如 package_install_failed'
     )
 
     return parser.parse_args()
@@ -533,6 +538,7 @@ def analyze_version(
     addr2line_max_frames: int,
     analysis_mode: str = 'full',
     ai_only_reason: str = '',
+    degraded_reason: str = '',
 ) -> Dict:
     """分析指定版本的所有崩溃"""
     version_clean = clean_version(version)
@@ -579,7 +585,7 @@ def analyze_version(
     # 限制分析的崩溃数量
     analyzed_crashes = crashes if max_crashes <= 0 else crashes[:max_crashes]
     analysis_mode = (analysis_mode or 'full').replace('_', '-')
-    if analysis_mode not in ('full', 'ai-only'):
+    if analysis_mode not in ('full', 'degraded-full', 'ai-only'):
         analysis_mode = 'full'
 
     total_fixable = sum(1 for c in analyzed_crashes if c['fixable'] is True)
@@ -598,6 +604,8 @@ def analyze_version(
         total_non_fixable = sum(1 for c in analyzed_crashes if c['fixable'] is False)
         total_uncertain = sum(1 for c in analyzed_crashes if c['fixable'] == 'uncertain')
     elif HAS_ENHANCED:
+        if analysis_mode == 'degraded-full':
+            print(f"⚠️ 运行降级增强分析 ({degraded_reason or 'fallback'}) ...")
         print(f"🔧 运行增强分析 (addr2line / objdump / git blame / LLM / debuginfod) ...")
         enhanced_results, enhanced_stats = run_enhanced_analysis_for_version(
             analyzed_crashes, workspace, package, version_clean,
@@ -662,6 +670,7 @@ def analyze_version(
         'version_dir': version_dir,
         'analysis_mode': analysis_mode,
         'ai_only_reason': ai_only_reason if analysis_mode == 'ai-only' else '',
+        'degraded_reason': degraded_reason if analysis_mode == 'degraded-full' else '',
         'analysis_time': datetime.now().isoformat(),
         'version_stats': version_stats,
         'summary': {
@@ -707,6 +716,8 @@ def save_markdown_report(analysis: Dict, output_file: Path):
         f.write(f"**分析模式**: {analysis.get('analysis_mode', 'full')}\n\n")
         if analysis.get('analysis_mode') == 'ai-only':
             f.write(f"**AI-only原因**: {analysis.get('ai_only_reason') or 'fallback'}\n\n")
+        elif analysis.get('analysis_mode') == 'degraded-full':
+            f.write(f"**降级原因**: {analysis.get('degraded_reason') or 'fallback'}\n\n")
 
         # 摘要
         f.write("## 摘要\n\n")
@@ -722,6 +733,8 @@ def save_markdown_report(analysis: Dict, output_file: Path):
         if estats:
             if analysis.get('analysis_mode') == 'ai-only':
                 f.write("**AI-only分析**:\n")
+            elif analysis.get('analysis_mode') == 'degraded-full':
+                f.write("**降级增强分析**:\n")
             else:
                 f.write("**增强分析**:\n")
             f.write(f"- addr2line 完全解析: {estats.get('addr2line_resolved', 0)}\n")
@@ -903,6 +916,8 @@ def main():
     print(f"分析模式: {args.analysis_mode}")
     if args.analysis_mode == 'ai-only':
         print(f"AI-only原因: {args.ai_only_reason or 'fallback'}")
+    elif args.analysis_mode == 'degraded-full':
+        print(f"降级原因: {args.degraded_reason or 'fallback'}")
     print()
 
     # 分析版本
@@ -914,6 +929,7 @@ def main():
         args.addr2line_max_frames,
         args.analysis_mode,
         args.ai_only_reason,
+        args.degraded_reason,
     )
 
     if 'error' in analysis:
@@ -947,6 +963,8 @@ def main():
     if estats:
         if analysis.get('analysis_mode') == 'ai-only':
             print(f"=== AI-only分析 ===")
+        elif analysis.get('analysis_mode') == 'degraded-full':
+            print(f"=== 降级增强分析 ===")
         else:
             print(f"=== 增强分析 ===")
         print(f"addr2line: {estats.get('addr2line_resolved', 0)}/{estats.get('total', 0)} resolved")
