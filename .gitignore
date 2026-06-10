@@ -12,3 +12,7 @@ htmlcov/
 coredump-workspace-*/
 *.log
 *.tmp
+
+# dde-filemanager crash analysis data
+dde-filemanager-crash-analysis/data/
+accounts.json

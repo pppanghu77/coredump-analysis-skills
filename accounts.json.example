@@ -12,16 +12,29 @@
     }
   },
   "metabase": {
-    "_comment": "必填：用于下载崩溃数据",
+    "_comment": "必填：用于下载原始崩溃数据 (DB10 clickhouse)",
     "name": "Metabase",
-    "description": "用于下载崩溃数据",
+    "description": "用于下载原始崩溃数据",
     "url": "https://metabase.cicd.getdeepin.org",
     "account": {
-      "username": "app@deepin.org",
-      "password": "deepin123"
+      "username": "在此输入metabase账号",
+      "password": "在此输入metabase密码"
     },
     "database": {
       "id": 10
+    }
+  },
+  "metabase_summary": {
+    "_comment": "必填：用于下载崩溃汇总统计数据 (DB9 coredump_a_ver)",
+    "name": "Metabase Summary",
+    "description": "用于下载崩溃汇总统计（崩溃率、各架构次数等）",
+    "url": "https://metabase.cicd.getdeepin.org",
+    "account": {
+      "username": "在此输入rpt账号",
+      "password": "在此输入rpt密码"
+    },
+    "database": {
+      "id": 9
     }
   },
   "gerrit": {
