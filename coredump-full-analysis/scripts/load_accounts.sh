@@ -83,7 +83,6 @@ require_account_service() {
             ;;
         gerrit)
             accounts_value_missing "${GERRIT_USER:-}" && { echo "错误: accounts.json 缺少 gerrit.account.username" >&2; return 1; }
-            accounts_value_missing "${GERRIT_PASSWORD:-}" && { echo "错误: accounts.json 缺少 gerrit.account.password" >&2; return 1; }
             ;;
         shuttle)
             accounts_value_missing "${SHUTTLE_USERNAME:-}" && { echo "错误: accounts.json 缺少 shuttle.account.username" >&2; return 1; }

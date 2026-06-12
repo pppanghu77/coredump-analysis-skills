@@ -565,7 +565,11 @@ if [[ ! -f "$LOAD_ACCOUNTS_SCRIPT" ]]; then
     exit 1
 fi
 source "$LOAD_ACCOUNTS_SCRIPT"
-load_accounts_or_die metabase gerrit shuttle system
+required_services=("metabase")
+if [[ "$ENABLE_CODE_MANAGEMENT" == "true" ]]; then
+    required_services+=("gerrit")
+fi
+load_accounts_or_die "${required_services[@]}"
 
 export GERRIT_USERNAME="$GERRIT_USER"
 
