@@ -520,6 +520,16 @@ download_data() {
     download_name=$(get_data_download_name)
     local search_package
     search_package=$(get_crash_search_name "$download_name")
+    local sanitized_search_package="${search_package//\//_}"
+
+    # 根据 ARCH 参数确定CSV文件名中的架构后缀
+    local csv_arch_suffix
+    case "$ARCH" in
+        x86) csv_arch_suffix="X86" ;;
+        x86_64|amd64) csv_arch_suffix="X86" ;;
+        arm|arm64|aarch64) csv_arch_suffix="AARCH64" ;;  # arm/arm64/aarch64 都使用 AARCH64 文件名后缀
+        *) csv_arch_suffix="$ARCH" ;;
+    esac
 
     # 直接使用原始脚本，不复制到workspace
     echo -e "${YELLOW}当前分析包: $PACKAGE${NC}" >&2
@@ -531,7 +541,7 @@ download_data() {
 
     # 同一 workspace 内多子包共用同一项目下载数据；已存在时直接复用，避免重复拉取。
     local existing_csv=""
-    existing_csv=$(find "$WORKSPACE/1.数据下载" -name "${search_package}_*_crash_*.csv" -type f 2>/dev/null | sort | tail -1 || true)
+    existing_csv=$(find "$WORKSPACE/1.数据下载" -type f \( -name "${search_package}_${csv_arch_suffix}_crash_*.csv" -o -name "${sanitized_search_package}_${csv_arch_suffix}_crash_*.csv" \) 2>/dev/null | sort | tail -1 || true)
     if [[ -n "$existing_csv" ]]; then
         local existing_lines
         existing_lines=$(wc -l < "$existing_csv" 2>/dev/null || echo 0)
@@ -547,21 +557,12 @@ download_data() {
     echo -e "${YELLOW}执行: ${cmd[*]}${NC}" >&2
     "${cmd[@]}" >&2
 
-    # 根据 ARCH 参数确定CSV文件名中的架构后缀
-    local csv_arch_suffix
-    case "$ARCH" in
-        x86) csv_arch_suffix="X86" ;;
-        x86_64) csv_arch_suffix="X86" ;;
-        arm|arm64|aarch64) csv_arch_suffix="AARCH64" ;;  # arm/arm64/aarch64 都使用 AARCH64 文件名后缀
-        *) csv_arch_suffix="$ARCH" ;;
-    esac
-
-    # 查找下载的文件（使用搜索包名）
-    local csv_file=$(find "$WORKSPACE/1.数据下载" -name "${search_package}_${csv_arch_suffix}_crash_*.csv" -type f | sort | tail -1)
+    # 查找下载的文件（优先匹配原始搜索名，同时兼容 slash -> underscore 的文件名）
+    local csv_file=$(find "$WORKSPACE/1.数据下载" -type f \( -name "${search_package}_${csv_arch_suffix}_crash_*.csv" -o -name "${sanitized_search_package}_${csv_arch_suffix}_crash_*.csv" \) | sort | tail -1)
 
     if [[ -z "$csv_file" ]]; then
         # 下载失败，尝试使用旧的CSV文件
-        local old_csv=$(find "$WORKSPACE/1.数据下载" -name "${search_package}_${csv_arch_suffix}_crash_*.csv" -type f 2>/dev/null | sort | tail -1)
+        local old_csv=$(find "$WORKSPACE/1.数据下载" -type f \( -name "${search_package}_${csv_arch_suffix}_crash_*.csv" -o -name "${sanitized_search_package}_${csv_arch_suffix}_crash_*.csv" \) 2>/dev/null | sort | tail -1)
         if [[ -n "$old_csv" ]]; then
             local old_lines=$(wc -l < "$old_csv")
             echo -e "${YELLOW}⚠️ 本次下载未产生新数据，回退使用旧文件: $old_csv ($old_lines 行)${NC}" >&2
@@ -618,6 +619,17 @@ filter_data() {
 
     # 只向 stdout 输出文件路径（无任何其他输出）
     printf "%s" "$filtered_csv"
+}
+
+filtered_csv_has_rows() {
+    local filtered_csv="$1"
+
+    [[ -f "$filtered_csv" ]] || return 1
+
+    awk '
+        NR > 1 && $0 ~ /[^[:space:]]/ { found = 1; exit }
+        END { exit(found ? 0 : 1) }
+    ' "$filtered_csv"
 }
 
 # 步骤3: 代码管理 - 为每个崩溃版本切换代码分支
@@ -1498,6 +1510,13 @@ main() {
     # 步骤1+2: 数据下载和筛选（只执行一次）
     local csv_file=$(download_data)
     local filtered_csv=$(filter_data "$csv_file")
+
+    if ! filtered_csv_has_rows "$filtered_csv"; then
+        local download_key
+        download_key=$(get_data_download_name)
+        echo -e "${YELLOW}⚠️ download_empty_skipped: package=$PACKAGE download_key=$download_key filtered_csv=$filtered_csv reason=no effective rows found; skipping package. If project-level download is intended, use --data-download-name to set the project download key.${NC}" >&2
+        return 0
+    fi
 
     # 步骤3+4+5: 按版本循环执行
     # 从版本列表读取每个版本，依次执行：切换代码→下载包→分析崩溃
