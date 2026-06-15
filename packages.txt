@@ -6,9 +6,10 @@
 #   - 如果分析命令指定了 --packages，则只分析指定项目，忽略此文件
 #
 # 格式：[项目名:]包名[,...] [分支名]
-#   - 项目名：可选，Gerrit 仓库路径，默认与第一个包名相同
-#   - 包名：必填，用于搜索崩溃数据（Metabase），支持逗号分隔多个
-#   - 分支名：可选，提交修复的目标分支，默认 develop/eagle
+#   - 项目名：可选，Gerrit 仓库路径；用于代码下载与 Gerrit 归属
+#   - 包名：必填；用于搜索崩溃数据（Metabase）以及下载 deb/dbgsym，支持逗号分隔多个
+#   - 分支名：可选；用于源码 checkout 与 Gerrit target branch，默认 develop/eagle
+#   - 默认按包名下载崩溃数据；仅显式传入 --data-download-name 时才覆盖下载键
 #
 # 示例：
 #   dde-dock                                        # 项目=包名=dde-dock，分支=develop/eagle
@@ -20,6 +21,7 @@
 # DDE 项目清单 (默认分支: develop/eagle)
 # ============================================================================
 
+deepin-kde/kwin:kwin-x11
 dde-control-center
 dde-dock
 dde-launcher

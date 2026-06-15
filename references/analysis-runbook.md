@@ -22,7 +22,7 @@ ls -la ~/.ssh/id_rsa                         # when clone/push is involved
 
 ## Package scope
 
-`packages.txt` is the default full-analysis scope. Entries may be direct package names, `project:package`, `project:package branch`, or one-project-many-packages entries such as `dde-network-core:dcc-network-plugin,deepin-service-plugin-network,dock-network-plugin`. Ordinary direct entries download Metabase data by package name. `project:package...` entries download crash data by the project side, then filter by the actual package side; project context is also used for source/Gerrit/fix mapping.
+`packages.txt` is the default full-analysis scope. Entries may be direct package names, `project:package`, `project:package branch`, or one-project-many-packages entries such as `dde-network-core:dcc-network-plugin,deepin-service-plugin-network,dock-network-plugin`. Direct entries use the package name for crash-data download, filtering, and deb/dbgsym download. `project:package...` entries keep that same package-side behavior for crash/package downloads, while the project side is used only for source checkout, Gerrit mapping, and branch operations. Use `--data-download-name` only when you intentionally need an explicit external download-key override that differs from the package being filtered/analyzed.
 
 ## Entrypoints
 
@@ -48,7 +48,7 @@ Important defaults:
 - `workflow.enable_package_management` controls step 4 deb/dbgsym download and install; disabled runs log `package=skipped_disabled` and analysis continues without package install.
 - `workflow.enable_auto_fix_submit` controls the default auto-fix-submit behavior; override per run with `AUTO_FIX_SUBMIT=false`, `--auto-fix-submit`, or `--no-auto-fix-submit`.
 - `analysis.max_crashes` controls the per-version crash count depth; default `0` means all deduplicated crashes.
-- `analysis.addr2line_max_frames` controls enhanced addr2line frame depth; default `500`.
+- `analysis.addr2line_max_frames` controls the configured enhanced addr2line frame depth; default `500`. When automatic deep dive is triggered, the workflow raises the effective addr2line depth to at least `600` for that deeper pass.
 - `reuse.enable_local_reuse` is enabled by default. Step 3/4 first search recent local `coredump-workspace-*` directories for reusable source and deb/dbgsym data, then fall back to clone/download only when no matching data is found.
 - `reuse.reuse_source_code` reuses matching `3.代码管理/<gerrit_project>` git repos by Gerrit project name; if HEAD is not already at the target tag, it fetches tags and checks out/resets to the current crash version. Missing target tags skip source/deb paths and run that version in AI-only stack-analysis mode.
 - Missing matching deb/dbgsym packages also run the version in AI-only mode, without installing deb packages or using addr2line/objdump/git/source enhancement.

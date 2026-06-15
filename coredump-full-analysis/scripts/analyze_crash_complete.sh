@@ -67,7 +67,7 @@ get_gerrit_project() {
     fi
 }
 
-# 获取崩溃数据下载名称。普通包默认使用 PACKAGE；packages.txt 中 project:pkg1,pkg2 映射由上层显式传入 project。
+# 获取崩溃数据下载名称。默认使用 PACKAGE；仅当外部下载键与包名有意不一致时，才显式传入 DATA_DOWNLOAD_NAME 覆盖。
 get_data_download_name() {
     if [[ -n "$DATA_DOWNLOAD_NAME" ]]; then
         echo "$DATA_DOWNLOAD_NAME"
@@ -295,7 +295,7 @@ ${GREEN}选项:${NC}
     --package <name>       兼容旧参数，等价于 --packages
     --project <name>       Gerrit 项目名（可选，默认与包名相同）
                            例如: go-lib, base/lightdm
-    --data-download-name <name>  崩溃数据下载名称（可选，默认与包名相同；一项目多包时由上层传项目名）
+    --data-download-name <name>  崩溃数据下载名称（可选，默认与包名相同；仅当外部下载键有意与包名不一致时显式覆盖）
     --start-date <date>   开始日期（格式: YYYY-MM-DD；默认不限制）
                            例如: 2026-04-05
     --end-date <date>     结束日期（格式: YYYY-MM-DD；默认不限制）
@@ -515,7 +515,7 @@ download_data() {
         exit 1
     fi
 
-    # 下载名称可与当前分析包不同：一项目多包场景按项目下载，后续仍按 PACKAGE 筛选。
+    # 下载名称默认跟随当前分析包；仅当外部下载键有意不同于 PACKAGE 时，才通过 DATA_DOWNLOAD_NAME 显式覆盖。
     local download_name
     download_name=$(get_data_download_name)
     local search_package
@@ -1514,7 +1514,7 @@ main() {
     if ! filtered_csv_has_rows "$filtered_csv"; then
         local download_key
         download_key=$(get_data_download_name)
-        echo -e "${YELLOW}⚠️ download_empty_skipped: package=$PACKAGE download_key=$download_key filtered_csv=$filtered_csv reason=no effective rows found; skipping package. If project-level download is intended, use --data-download-name to set the project download key.${NC}" >&2
+        echo -e "${YELLOW}⚠️ download_empty_skipped: package=$PACKAGE download_key=$download_key filtered_csv=$filtered_csv reason=no effective rows found; skipping package. Crash-data download defaults to the package name; use --data-download-name only as an explicit override when the external download key intentionally differs.${NC}" >&2
         return 0
     fi
 

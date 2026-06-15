@@ -51,7 +51,7 @@ SUMMARY_DIR_NAME="6.总结报告"
 declare -A PACKAGE_BRANCH_MAP
 # 包-项目映射（关联数组）：包名 → Gerrit 项目名
 declare -A PACKAGE_PROJECT_MAP
-# 包-崩溃数据下载名称映射（关联数组）：包名 → Metabase 下载名称；一项目多包时为项目名
+# 包-崩溃数据下载名称映射（关联数组）：包名 → Metabase 下载名称；默认按实际包名下载
 declare -A PACKAGE_DATA_DOWNLOAD_MAP
 GENERATE_GERRIT_WEB_REPORT=true
 SERVE_GERRIT_WEB_REPORT=false
@@ -72,7 +72,8 @@ ${GREEN}默认行为:${NC}
     - 不指定 --packages 时：自动从 packages.txt 读取当前启用的 24 个默认项目
     - 流程开关和崩溃分析层数默认读取 analysis_config.json（数据筛选必做，代码管理/包管理/自动修复提交可配置）
     - 分析层数默认：max_crashes=0（全部），addr2line_max_frames=500
-    - --auto-fix-submit 仅提交真实代码修改；可通过 AUTO_FIX_SUBMIT=false 或 --no-auto-fix-submit 临时关闭
+    - --auto-fix-submit 当前默认已开启（仅真实代码修改可提交 Gerrit）
+    - 可通过 AUTO_FIX_SUBMIT=false 或 --no-auto-fix-submit 临时关闭
     - --progress 不带数值时，默认使用 ${DEFAULT_PROGRESS_INTERVAL} 秒
 
 ${GREEN}必需参数:${NC}
@@ -106,6 +107,10 @@ ${GREEN}可选参数:${NC}
 ${GREEN}分支规则:${NC}
     默认分支: origin/develop/eagle
     packages.txt 格式: [项目名:]包名[,...] [分支名]
+    - 项目名：可选，Gerrit 仓库路径；用于代码下载与 Gerrit 归属
+    - 包名：必填；用于搜索崩溃数据（Metabase）以及下载 deb/dbgsym
+    - 分支名：可选；用于源码 checkout 与 Gerrit target branch
+    - 默认按包名下载崩溃数据；如需覆盖下载键，请在下游分析脚本中显式传入 --data-download-name
     --target-branch 可强制覆盖所有包的分支
 
 ${GREEN}packages.txt 示例:${NC}
@@ -146,7 +151,7 @@ ${GREEN}示例:${NC}
     $0 --packages dde-launcher --auto-fix-submit --target-branch origin/develop/eagle
 
     # 纯分析自动化：不执行自动修复/提交检查
-    AUTO_FIX_SUBMIT=false $0 --packages dde-session-ui --start-date 2026-03-14 --end-date 2026-04-14
+    AUTO_FIX_SUBMIT=false bash run_analysis_agent.sh --packages dde-session-ui --start-date 2026-03-14 --end-date 2026-04-14
 
     # 分析完成后启动 Gerrit 网页报告本地服务
     $0 --packages dde-dock --auto-fix-submit --serve-gerrit-web-report
@@ -381,10 +386,11 @@ parse_packages_file() {
             [[ -z "$pkg" ]] && continue
 
             # 设置项目映射和数据下载名称映射。
-            # project:pkg1,pkg2 表示多个二进制包属于同一个源码项目，崩溃数据下载按项目名执行，筛选/包管理按实际包名执行。
+            # project:pkg1,pkg2 表示多个二进制包属于同一个源码项目；
+            # 代码/Gerrit 归属按 project，崩溃数据下载和包下载按实际 pkg。
             if [[ -n "$project" ]]; then
                 PACKAGE_PROJECT_MAP["$pkg"]="$project"
-                PACKAGE_DATA_DOWNLOAD_MAP["$pkg"]="$project"
+                PACKAGE_DATA_DOWNLOAD_MAP["$pkg"]="$pkg"
             else
                 PACKAGE_PROJECT_MAP["$pkg"]="$pkg"
                 PACKAGE_DATA_DOWNLOAD_MAP["$pkg"]="$pkg"
@@ -424,18 +430,21 @@ get_package_data_download_name() {
 }
 
 load_default_packages_if_needed() {
-    if [[ -n "$PACKAGES" ]]; then
+    if [[ -f "$PACKAGES_FILE" ]]; then
+        parse_packages_file "$PACKAGES_FILE" >/dev/null
+    elif [[ -n "$PACKAGES" ]]; then
         return 0
-    fi
-
-    if [[ ! -f "$PACKAGES_FILE" ]]; then
+    else
         echo -e "${RED}错误: 必须指定 --packages 参数，且 packages.txt 不存在${NC}"
         show_help
         exit 1
     fi
 
+    if [[ -n "$PACKAGES" ]]; then
+        return 0
+    fi
+
     echo -e "${YELLOW}未指定 --packages，从 $PACKAGES_FILE 读取默认项目列表${NC}"
-    parse_packages_file "$PACKAGES_FILE" >/dev/null
     PACKAGES="$PARSED_PACKAGES"
     if [[ -z "$PACKAGES" ]]; then
         echo -e "${RED}错误: packages.txt 为空${NC}"
@@ -828,13 +837,13 @@ launch_package() {
     local cmd=(bash analyze_crash_complete.sh
         --packages "$pkg"
         --project "$pkg_project"
-        --data-download-name "$pkg_data_download_name"
         --arch "$ARCH"
         --sys-version "$SYS_VERSION"
         --workspace "$WORKSPACE"
         --target-branch "$pkg_branch"
         --max-crashes "$MAX_CRASHES"
         --addr2line-max-frames "$ADDR2LINE_MAX_FRAMES")
+    [[ "$pkg_data_download_name" != "$pkg" ]] && cmd+=(--data-download-name "$pkg_data_download_name")
     [[ -n "$START_DATE" ]] && cmd+=(--start-date "$START_DATE")
     [[ -n "$END_DATE" ]] && cmd+=(--end-date "$END_DATE")
     [[ "$AUTO_FIX_SUBMIT" == "true" ]] && cmd+=(--auto-fix-submit)

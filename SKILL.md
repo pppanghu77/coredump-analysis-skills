@@ -31,6 +31,8 @@ The current repo checkout is the distributable source of truth. Do not sync to o
 4. Before broad repo/skill optimization, present a plan and wait for approval.
 5. Before full/multi-step analysis runs, present steps, risks, expected outputs, and monitoring.
 
+For `project:pkg1,pkg2` entries in `packages.txt`, the project side is only for source/Gerrit handling; crash-data and deb/dbgsym downloads must use each concrete package token on the right-hand side.
+
 ## Main Entrypoints
 
 For account checks, package scope, workspace layout, monitoring, and recovery, load `references/analysis-runbook.md`.
@@ -40,7 +42,7 @@ bash run_analysis_agent.sh --background --progress 180      # packages.txt scope
 bash run_analysis_agent.sh --packages dde-dock --background # single package
 ```
 
-Key defaults: auto-fix-submit enabled; `analyze_crash_complete.sh --max-crashes` defaults to `0`; automatic deep dive uses at least `600` addr2line frames.
+Key defaults: auto-fix-submit enabled; `analyze_crash_complete.sh --max-crashes` defaults to `0`; `analysis.addr2line_max_frames` defaults to `500`, and automatic deep dive raises the effective addr2line depth to at least `600` when triggered.
 
 ## First Stops and Pitfalls
 

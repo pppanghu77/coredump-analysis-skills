@@ -146,7 +146,7 @@ bash coredump-full-analysis/scripts/analyze_crash_complete.sh \
 - 某版本 deb/dbgsym 不存在时，跳过安装，继续基于崩溃数据生成分析。
 - deb/dbgsym 版本匹配支持常见 Debian 构建后缀，例如 `-1`、`+build`、`.1-1`。
 - 源码 tag 无精确匹配时，源码脚本会保留当前可用状态；分析仍继续。
-- 崩溃数据下载始终按包名（package）查询，不按 Gerrit project 名查询；像 `base/lightdm:lightdm`、`go-lib:golang-github-linuxdeepin-go-lib-dev` 这类映射项，下载阶段必须传右侧包名。
+- 崩溃数据下载始终按包名（package）查询，不按 Gerrit project 名查询；`project:pkg1,pkg2` 映射项中，下载和筛选阶段必须传右侧包名，代码/Gerrit 阶段才使用左侧项目名。
 - `analyze_with_fix_mapping.py` 现已兼容可选 `--project` 参数：`--package` 仍决定筛选 CSV/崩溃归属，`--project` 仅用于 Gerrit/修复映射场景，不能反过来替代下载包名。
 - `generate_ai_report.py` 自带 `scripts/` 路径注入，调用时不需要额外手工设置 `PYTHONPATH` 才能导入 `package_rules.py`。
 
@@ -162,7 +162,7 @@ bash coredump-full-analysis/scripts/analyze_crash_complete.sh \
 | `<workspace>/2.数据筛选/<package>_crash_versions.txt` | 待分析版本列表 |
 | `<workspace>/2.数据筛选/<package>_crash_baseline_diff.json` | 与历史唯一崩溃基线的增量比对结果 |
 | `<workspace>/2.数据筛选/<package>_new_crashes.csv` | 本次发现的新增唯一崩溃 |
-| `<workspace>/3.代码管理/<package>/` | 源码仓库 |
+| `<workspace>/3.代码管理/<project>/` | 源码仓库；`project:package` 映射时使用左侧 project/Gerrit 项目标识 |
 | `<workspace>/4.包管理/downloads/` | deb/dbgsym 下载目录；无 sudo 安装能力时可能为空 |
 | `<workspace>/5.崩溃分析/<package>/version_*/analysis_report.md` | 版本级分析报告 |
 | `<workspace>/5.崩溃分析/<package>/full_analysis_report.md` | 包级完整报告 |
@@ -181,7 +181,7 @@ bash coredump-full-analysis/scripts/analyze_crash_complete.sh \
 当前自动提交规则：只有真实代码修改（源码改动或代码 cherry-pick 产生的提交）才允许自动推送 Gerrit。仅分析文件/说明文档（如 `coredump-analysis-report.md`）不会自动提交。
 
 - `run_analysis_agent.sh`：默认开启自动提交，但仍受上述“仅代码修改可提交”约束；如需纯分析自动化，可通过环境变量关闭：`AUTO_FIX_SUBMIT=false bash run_analysis_agent.sh ...`。
-- `coredump-full-analysis/scripts/analyze_crash_complete.sh`：默认关闭自动提交，需显式传 `--auto-fix-submit`。
+- `coredump-full-analysis/scripts/analyze_crash_complete.sh`：是否自动提交由配置决定；当前仓库的 `analysis_config.json` 默认已开启，如需纯分析可传 `--no-auto-fix-submit` 或设置 `AUTO_FIX_SUBMIT=false`。
 
 ## Gerrit Web Report
 
@@ -317,6 +317,6 @@ bash coredump-full-analysis/scripts/step5_analyze.sh \
 - `../accounts.json`：唯一账号配置入口。
 - `scripts/analyze_crash_complete.sh`：完整单包流程。
 - `scripts/step1_download.sh`：数据下载阶段。
-- `scripts/generate_full_report.py`：生成包级完整报告。
-- `scripts/generate_ai_report.py`：生成 AI 分析报告。
-- `scripts/generate_final_report.py`：生成总结报告。
+- `scripts/reporting/generate_full_report.py`：生成包级完整报告。
+- `scripts/reporting/generate_ai_report.py`：生成 AI 分析报告。
+- `scripts/reporting/generate_final_report.py`：生成总结报告。

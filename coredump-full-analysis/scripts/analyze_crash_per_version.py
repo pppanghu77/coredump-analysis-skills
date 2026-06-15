@@ -91,7 +91,7 @@ def parse_args():
 
 def clean_version(version: str) -> str:
     """清理版本号"""
-    version = re.sub(r'^1:', '', version)
+    version = re.sub(r'^\d+:', '', version)
     version = re.sub(r'-\d+$', '', version)
     return version
 
@@ -561,7 +561,13 @@ def analyze_version(
     if stats_json.exists():
         with open(stats_json, 'r', encoding='utf-8') as f:
             stats = json.load(f)
-            version_stats = stats.get('by_version', {}).get(version, {})
+            by_version = stats.get('by_version', {})
+            version_stats = by_version.get(version, {})
+            if not version_stats:
+                for raw_version, raw_stats in by_version.items():
+                    if clean_version(raw_version) == version_clean:
+                        version_stats = raw_stats
+                        break
 
     # 读取崩溃数据
     crashes = []

@@ -262,6 +262,63 @@ class PackageMatchingTests(unittest.TestCase):
 
         self.assertIn("kwin-x11", output)
         self.assertIn("kwin-x11_X86_crash_test.csv", output)
+        self.assertIn("PACKAGE_ARG=kwin-x11", output)
+        self.assertIn("RETURN_CODE=0", output)
+
+    def test_project_mapping_does_not_change_default_download_key(self):
+        with TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            workspace = tmp_path / "workspace"
+            data_download_dir = workspace / "1.数据下载"
+            data_download_dir.mkdir(parents=True)
+
+            skills_dir = tmp_path / "skills"
+            download_script = skills_dir / "coredump-data-download" / "scripts" / "download_metabase_csv.sh"
+            download_script.parent.mkdir(parents=True)
+            download_script.write_text(
+                textwrap.dedent(
+                    f"""\
+                    #!/usr/bin/env bash
+                    set -euo pipefail
+                    package_arg="${{@: -3:1}}"
+                    echo "PACKAGE_ARG=$package_arg" >&2
+                    printf 'header\n' > {data_download_dir / 'kwin-x11_X86_crash_test.csv'}
+                    """
+                ),
+                encoding="utf-8",
+            )
+            download_script.chmod(0o755)
+
+            script_copy = self.load_script_without_main(tmp_path)
+            command = textwrap.dedent(
+                f"""
+                set -euo pipefail
+                source {script_copy}
+                WORKSPACE={workspace}
+                SKILLS_DIR={skills_dir}
+                PACKAGE='kwin-x11'
+                GERRIT_PROJECT='deepin-kde/kwin'
+                DATA_DOWNLOAD_NAME=''
+                SYS_VERSION=test-system
+                ARCH='x86'
+                START_DATE=
+                END_DATE=
+                download_data
+                """
+            )
+            result = subprocess.run(
+                ["bash", "-c", command],
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+        output = result.stdout + result.stderr + f"\nRETURN_CODE={result.returncode}\n"
+        self.assertIn("PACKAGE_ARG=kwin-x11", output)
+        self.assertIn("kwin-x11_X86_crash_test.csv", output)
+        self.assertNotIn("PACKAGE_ARG=deepin-kde/kwin", output)
+        self.assertIn("RETURN_CODE=0", output)
 
     def test_download_data_accepts_sanitized_csv_name_for_slash_project(self):
         output = self.run_download_data_for_slash_data_download_name(
@@ -271,6 +328,8 @@ class PackageMatchingTests(unittest.TestCase):
 
         self.assertIn("deepin-kde/kwin", output)
         self.assertIn("deepin-kde_kwin_X86_crash_test.csv", output)
+        self.assertIn("PACKAGE_ARG=deepin-kde/kwin", output)
+        self.assertIn("RETURN_CODE=0", output)
 
     def test_download_data_does_not_reuse_sanitized_cached_csv_from_wrong_architecture(self):
         output = self.run_download_data(
@@ -307,7 +366,7 @@ class PackageMatchingTests(unittest.TestCase):
         self.assertIn("no effective rows", result.stderr)
         self.assertIn("skipping package", result.stderr)
         self.assertIn("--data-download-name", result.stderr)
-        self.assertIn("project-level download", result.stderr)
+        self.assertIn("explicit override", result.stderr)
         self.assertIn("ANALYSIS_MARKER_EXISTS=False", result.stderr)
 
 
