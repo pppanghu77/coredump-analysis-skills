@@ -13,6 +13,9 @@ coredump-workspace-*/
 *.log
 *.tmp
 
-# dde-filemanager crash analysis data
-dde-filemanager-crash-analysis/data/
+# crash clustering skill data
+coredump-stack-clustering/data/
 accounts.json
+
+# 看板人工维护的修复记录(本地,不入库)
+coredump-stack-clustering/kanban/修复记录.csv

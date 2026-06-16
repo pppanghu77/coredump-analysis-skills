@@ -270,6 +270,11 @@ body{font-family:'DM Sans','Noto Sans SC',-apple-system,sans-serif;background:va
     </div>
   </div>
   <div class="kanban-row" id="kanban"></div>
+
+  <div class="row" style="margin-top:32px">
+    <div class="section-label">当前问题占比分布</div>
+    <div class="card"><div class="card-body"><div id="chartPie" class="chart-box" style="height:420px"></div></div></div>
+  </div>
 </div>
 
 <div class="modal-bg" id="modalBg" onclick="closeModal()">
@@ -282,7 +287,7 @@ body{font-family:'DM Sans','Noto Sans SC',-apple-system,sans-serif;background:va
 
 <script>
 /* ── 全局状态 ── */
-var D = {reportSummary:[], issueTrend:{dates:[],issues:[],data:{}}, issueInfo:{}};
+var D = {reportSummary:[], issueTrend:{dates:[],issues:[],data:{}}, issueInfo:{}, distribution:[]};
 var _currentApp = '';
 var _appList = [];
 var PAL = ['#2a7d6e','#c0392b','#b8860b','#5b7fa5','#9b6b9e','#d4764e','#4a8c6f','#7a6b5a','#3d7a9e','#a05040','#6b8e6b'];
@@ -292,6 +297,7 @@ function last(a){return a&&a.length?a[a.length-1]:null}
 function max(a){return Math.max.apply(null,a.filter(function(v){return v!=null}))}
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
 function daysBetween(a,b){if(!a||!b)return null;var d1=new Date(a),d2=new Date(b);return Math.round((d2-d1)/86400000)}
+function nameToIssueId(name){for(var k in D.issueInfo){if(D.issueInfo[k].issue_name===name)return k}return null}
 
 /* ── 数据加载（多应用支持）── */
 function apiUrl(path){
@@ -301,11 +307,13 @@ function loadData(){
   return Promise.all([
     fetch(apiUrl('/api/summary')).then(function(r){return r.json()}),
     fetch(apiUrl('/api/trend')).then(function(r){return r.json()}),
-    fetch(apiUrl('/api/issues')).then(function(r){return r.json()})
+    fetch(apiUrl('/api/issues')).then(function(r){return r.json()}),
+    fetch(apiUrl('/api/distribution')).then(function(r){return r.json()})
   ]).then(function(results){
     D.reportSummary = results[0];
     D.issueTrend = results[1];
     D.issueInfo = results[2];
+    D.distribution = results[3];
     return D;
   });
 }
@@ -366,35 +374,26 @@ function renderKPI(){
   var cur=s0.rate||sn.rate||118, pk=157.63;
   var drop=((pk-cur)/pk*100).toFixed(1);
   var info=D.issueInfo;
-  var fixed=0,active=0,p0p1=0,totalDays=0,fixCount=0,effOk=0,effTotal=0;
+  // 已修复 = 修复记录命中(status 待验证);活跃 = 分析中
+  var fixed=0,active=0,p0p1=0;
   for(var k in info){
     var st=info[k].status;
-    if(st==='已修复'){
-      fixed++;
-      if(info[k].discovered_at&&info[k].verified_at){var d=daysBetween(info[k].discovered_at,info[k].verified_at);if(d!=null){totalDays+=d;fixCount++}}
-      // 修复有效率统计
-      var eff=info[k].fix_effectiveness;
-      if(eff==='已消除'||eff==='已降低'){effOk++;effTotal++}
-      else if(eff==='未改善'){effTotal++}
-      else if(eff==='待验证'){effTotal++}
-    }else{active++}
-    var sev=info[k].severity||'';if((sev.indexOf('P0')>=0||sev.indexOf('P1')>=0)&&(st!=='已修复'))p0p1++;
+    if(st==='待验证'){fixed++}
+    active++;  // 活跃 = 全部跟踪问题(分析中 + 已修复)
+    var sev=info[k].severity||'';if((sev.indexOf('P0')>=0||sev.indexOf('P1')>=0)&&st!=='待验证')p0p1++;
   }
-  var avgDays=fixCount>0?Math.round(totalDays/fixCount):'-';
-  var effRate=effTotal>0?Math.round(effOk/effTotal*100)+'%':'-';
   el.innerHTML='';
   [{l:'当前崩溃率',v:cur+'‱',c:'较峰值下降 '+drop+'%',cls:'clr-good'},
-   {l:'已修复问题',v:fixed,c:fixCount>0?'平均修复 '+avgDays+' 天':'',cls:'clr-info'},
-   {l:'活跃问题',v:active,c:'',cls:'clr-warn'},
-   {l:'P0/P1 未解决',v:p0p1,c:'',cls:p0p1>0?'clr-danger':'clr-good'},
-   {l:'修复有效率',v:effRate,c:effTotal>0?effOk+'/'+effTotal+' 有效':'',cls:'clr-info'}
+   {l:'已修复问题',v:fixed,c:fixed>0?'修复记录命中':'',cls:'clr-info'},
+   {l:'活跃问题',v:active,c:'分析中 '+(active-fixed)+' · 已修复 '+fixed,cls:'clr-warn'},
+   {l:'P0/P1 未解决',v:p0p1,c:'',cls:p0p1>0?'clr-danger':'clr-good'}
   ].forEach(function(i){
     el.innerHTML+='<div class="kpi-card"><div class="kpi-label">'+i.l+'</div><div class="kpi-value '+i.cls+'">'+i.v+'</div>'+(i.c?'<div class="kpi-change '+i.cls+'">'+i.c+'</div>':'')+'</div>';
   });
 }
 
 /* ── Charts ── */
-var chartRate,chartIssue,dropBuilt=false;
+var chartRate,chartIssue,chartPie,dropBuilt=false;
 function renderCharts(){
   var sm=D.reportSummary.slice();
   var rDates=sm.map(function(r){return sd(r.date)});
@@ -425,7 +424,10 @@ function renderCharts(){
   var issues=it.issues;
   // 将趋势数据重新按 smDates 索引
   var tdIdx={};it.dates.forEach(function(d,i){tdIdx[d]=i});
-  if(!chartIssue)chartIssue=echarts.init(document.getElementById('chartIssue'));
+  if(!chartIssue){
+    chartIssue=echarts.init(document.getElementById('chartIssue'));
+    chartIssue.on('click',function(params){var id=nameToIssueId(params.seriesName);if(id)showDetail(id)});
+  }
   chartIssue.setOption({
     tooltip:{trigger:'axis',backgroundColor:'#fff',borderColor:'#e8e6e1',borderWidth:1,textStyle:{color:'#1a1a1a',fontFamily:'DM Sans,Noto Sans SC,sans-serif',fontSize:11},
       axisPointer:{type:'line',lineStyle:{color:'#e8e6e1',width:1,type:'dashed'}},
@@ -437,13 +439,28 @@ function renderCharts(){
     series:issues.map(function(name,i){
       var raw=it.data[name]||[];
       // 按 smDates 重新取数据，取当前日期位置的趋势值
-      return{name:name,type:'line',smooth:true,symbol:'circle',symbolSize:6,
+      return{name:name,type:'line',smooth:true,symbol:'circle',symbolSize:7,triggerLineEvent:true,cursor:'pointer',
         data:smDates.map(function(d){var idx=tdIdx[d];return idx!=null&&raw[idx]>0?raw[idx]:null}),connectNulls:false,
-        lineStyle:{width:2,color:PAL[i%PAL.length]},itemStyle:{color:PAL[i%PAL.length],borderColor:'#fff',borderWidth:2},
+        lineStyle:{width:3,color:PAL[i%PAL.length]},itemStyle:{color:PAL[i%PAL.length],borderColor:'#fff',borderWidth:2},
         emphasis:{focus:'series',lineStyle:{width:3.5},itemStyle:{borderWidth:2,borderColor:'#fff',shadowBlur:6,shadowColor:'rgba(0,0,0,.15)'}}
       }
     })
   });
+  // 当前问题占比饼图(完整长尾,点击扇区查看详情)
+  var pieData=D.distribution.map(function(d,i){return{name:d.name,value:d.pct,id:d.hash,itemStyle:{color:PAL[i%PAL.length]}}});
+  if(!chartPie){
+    chartPie=echarts.init(document.getElementById('chartPie'));
+    chartPie.on('click',function(params){if(params.data&&params.data.id)showDetail(params.data.id)});
+  }
+  chartPie.setOption({
+    tooltip:{trigger:'item',backgroundColor:'#fff',borderColor:'#e8e6e1',borderWidth:1,textStyle:{color:'#1a1a1a',fontSize:12},
+      formatter:function(p){return esc(p.name)+'<br/><b>'+p.value+'%</b> ('+p.percent+'%)'}},
+    series:[{type:'pie',radius:['40%','65%'],center:['50%','54%'],avoidLabelOverlap:true,
+      itemStyle:{borderColor:'#fff',borderWidth:2},cursor:'pointer',
+      label:{show:true,fontSize:10,color:'#6b6966',formatter:function(p){return p.value>=4?p.value+'%':''}},
+      labelLine:{length:6,length2:6},
+      data:pieData}]
+  },true);
   if(!dropBuilt){
     dropBuilt=true;
     var dropList=document.getElementById('issueDropList');
@@ -464,30 +481,23 @@ function renderCharts(){
     document.addEventListener('click',function(e){var list=document.getElementById('issueDropList');if(list&&!list.contains(e.target)&&e.target.id!=='issueDropBtn'&&!dropBtn.contains(e.target)){list.classList.remove('show');dropBtn.classList.remove('open')}});
   }
 }
-window.addEventListener('resize',function(){if(chartRate)chartRate.resize();if(chartIssue)chartIssue.resize()});
+window.addEventListener('resize',function(){if(chartRate)chartRate.resize();if(chartIssue)chartIssue.resize();if(chartPie)chartPie.resize()});
 
 /* ── Kanban — 多列生命周期 ── */
-var STATUS_ORDER = ['待验证','复现中','已修复'];
-var STATUS_COL_CLASS = {'待验证':'col-verifying','复现中':'col-reproduced','已修复':'col-fixed'};
-var STATUS_BADGE = {'待验证':'bg-yellow','复现中':'bg-red','已修复':'bg-green'};
+var STATUS_COLUMNS = [
+  {title:'已修复 / 待验证', statuses:['已修复','待验证'], colClass:'col-fixed', badge:'bg-green'},
+  {title:'分析中', statuses:['分析中'], colClass:'col-analyzing', badge:'bg-blue'}
+];
 var SEVERITY_CLASS = {'P0-致命':'sev-p0','P1-严重':'sev-p1','P2-一般':'sev-p2','P3-轻微':'sev-p3'};
 
 function renderKanban(){
   var info=D.issueInfo, el=document.getElementById('kanban');
-  var groups={};
-  STATUS_ORDER.forEach(function(s){groups[s]=[]});
-  for(var k in info){
-    var i=info[k];
-    var st=i.status||'待验证';
-    if(!groups[st])groups[st]=[];
-    groups[st].push(i);
-  }
   el.innerHTML='';
-  STATUS_ORDER.forEach(function(status){
-    var items=groups[status]||[];
-    var cls=STATUS_COL_CLASS[status]||'col-discovered';
-    var bgCls=STATUS_BADGE[status]||'bg-gray';
-    var html='<div class="kanban-col '+cls+'"><div class="kanban-col-header">'+status+' <span class="badge '+bgCls+'">'+items.length+'</span></div>';
+  STATUS_COLUMNS.forEach(function(col){
+    var items=[];
+    for(var k in info){var st=info[k].status||'分析中';if(col.statuses.indexOf(st)>=0)items.push(info[k])}
+    items.sort(function(a,b){return (b.current_percentage||0)-(a.current_percentage||0)});
+    var html='<div class="kanban-col '+col.colClass+'"><div class="kanban-col-header">'+col.title+' <span class="badge '+col.badge+'">'+items.length+'</span></div>';
     html+='<div class="kanban-col-body">';
     items.forEach(function(i){
       var sevCls=SEVERITY_CLASS[i.severity]||'sev-p2';
@@ -560,7 +570,13 @@ function buildTimeline(i){
 var _editId=null,_isAdd=false;
 
 function showDetail(id){
-  var i=D.issueInfo[id];if(!i)return;
+  var i=D.issueInfo[id];
+  if(!i&&D.distribution){
+    for(var j=0;j<D.distribution.length;j++){if(D.distribution[j].hash===id){var d=D.distribution[j];
+      i={issue_id:d.hash,issue_name:d.name,current_percentage:d.pct,full_stack:d.stack,weeks:d.weeks,status:'分析中',severity:d.pct>=10?'P0-致命':d.pct>=1?'P1-严重':d.pct>=0.1?'P2-一般':'P3-轻微'};
+      break}}
+  }
+  if(!i)return;
   _editId=id;_isAdd=false;
 
   var html='';
@@ -570,7 +586,7 @@ function showDetail(id){
   var sevCls=SEVERITY_CLASS[i.severity]||'sev-p2';
   html+='<span class="sh-badge sh-severity">'+esc(i.severity||'P2-一般')+'</span>';
   html+='<span class="sh-badge sh-domain">'+esc(i.domain||'其他')+'</span>';
-  html+='<span class="sh-badge sh-status">'+esc(i.status||'待验证')+'</span>';
+  html+='<span class="sh-badge sh-status">'+esc(i.status||'分析中')+'</span>';
   if(i.assignee)html+='<span class="sh-badge sh-assignee">👤 '+esc(i.assignee)+'</span>';
   if(i.current_percentage>0)html+='<span class="sh-badge sh-assignee">'+i.current_percentage+'%</span>';
   html+='</div>';
@@ -595,6 +611,11 @@ function showDetail(id){
   html+='<div class="detail-field"><span class="df-label">修复版本</span><span class="df-value">'+esc(i.fix_version||'未修复')+'</span></div>';
   html+='<div class="detail-field"><span class="df-label">首现日期</span><span class="df-value">'+esc(i.first_seen_date||'—')+'</span></div>';
   html+='<div class="detail-field"><span class="df-label">影响架构</span><span class="df-value">'+esc(i.affected_arch||'全架构')+'</span></div>';
+  if(i.related_mr){
+    html+='<div class="detail-field full"><span class="df-label">修复MR</span><span class="df-value">';
+    i.related_mr.split(',').forEach(function(u){u=u.trim();if(u)html+='<a href="'+esc(u)+'" target="_blank" style="color:var(--accent);margin-right:12px;display:inline-block">'+esc(u)+'</a>'});
+    html+='</span></div>'
+  }
   html+='</div></div>';
 
   // 版本范围可视化
@@ -668,7 +689,7 @@ function editIssue(id){
 
 function addIssue(){
   _isAdd=true;_editId='new_'+Date.now();
-  var html=buildEditForm({issue_id:'',issue_name:'',domain:'其他',severity:'P2-一般',signal_type:'SIGSEGV',stack_fingerprint:'',full_stack:'',root_cause:'',introduced_version:'',first_seen_version:'',first_seen_date:'',fix_version:'',status:'待验证',fix_type:'',fix_effectiveness:'',post_fix_pct:'',discovered_at:new Date().toISOString().substring(0,10),analysis_started_at:'',root_cause_found_at:'',fix_submitted_at:'',verified_at:'',closed_at:'',assignee:'',related_issue:'',related_mr:'',tags:'',affected_arch:'全架构',notes:''},true);
+  var html=buildEditForm({issue_id:'',issue_name:'',domain:'其他',severity:'P2-一般',signal_type:'SIGSEGV',stack_fingerprint:'',full_stack:'',root_cause:'',introduced_version:'',first_seen_version:'',first_seen_date:'',fix_version:'',status:'分析中',fix_type:'',fix_effectiveness:'',post_fix_pct:'',discovered_at:new Date().toISOString().substring(0,10),analysis_started_at:'',root_cause_found_at:'',fix_submitted_at:'',verified_at:'',closed_at:'',assignee:'',related_issue:'',related_mr:'',tags:'',affected_arch:'全架构',notes:''},true);
   html+='<div class="modal-actions"><button class="btn" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveIssue()">保存</button></div>';
   document.getElementById('mTitle').textContent='新增问题';
   document.getElementById('mBody').innerHTML=html;
@@ -698,7 +719,7 @@ function buildEditForm(i,showId){
   html+=sel('问题领域','domain',i.domain||'其他',['平台插件','视图框架','排序引擎','剪贴板','缩略图','IO模块','系统升级','守护进程','其他']);
   html+=sel('严重程度','severity',i.severity||'P2-一般',['P0-致命','P1-严重','P2-一般','P3-轻微']);
   html+=sel('信号类型','signal_type',i.signal_type||'SIGSEGV',['SIGSEGV','SIGABRT','SIGFPE','其他']);
-  html+=sel('当前状态','status',i.status||'已发现',['待验证','已修复','复现中']);
+  html+=sel('当前状态','status',i.status||'分析中',['分析中','已修复']);
   html+=inp('堆栈指纹','stack_fingerprint',i.stack_fingerprint||'','textarea');
   html+=inp('完整堆栈','full_stack',i.full_stack||'','textarea');
   html+=inp('根因描述','root_cause',i.root_cause||'');
@@ -725,11 +746,15 @@ function buildEditForm(i,showId){
 }
 
 function appendTrend(html,i){
-  var trendData=D.issueTrend,issueName=i.issue_name,trendKey=null;
-  for(var k in trendData.data){if(k===issueName||issueName.indexOf(k)===0||k.indexOf(issueName)===0){trendKey=k;break}}
-  if(!trendKey){for(var k in trendData.data){if(issueName.indexOf(k)>=0||k.indexOf(issueName)>=0){trendKey=k;break}}}
-  if(trendKey&&trendData.data[trendKey]){
-    var vals=trendData.data[trendKey],dates=trendData.dates;
+  var trendData=D.issueTrend,dates=trendData.dates,vals=null;
+  if(i.weeks&&i.weeks.length){vals=i.weeks}
+  else{
+    var issueName=i.issue_name,trendKey=null;
+    for(var k in trendData.data){if(k===issueName||issueName.indexOf(k)===0||k.indexOf(issueName)===0){trendKey=k;break}}
+    if(!trendKey){for(var k in trendData.data){if(issueName.indexOf(k)>=0||k.indexOf(issueName)>=0){trendKey=k;break}}}
+    if(trendKey&&trendData.data[trendKey])vals=trendData.data[trendKey]
+  }
+  if(vals){
     if(vals.some(function(v){return v>0})){
       html+='<div class="detail-section"><div class="detail-section-title">历史占比变化</div>';
       html+='<div class="trend-cards">';

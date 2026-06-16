@@ -9,8 +9,11 @@ from pathlib import Path
 from collections import defaultdict
 
 
-def split_csv_by_version(input_file, output_dir=None):
-    """按 Version 列分类 CSV 文件"""
+def split_csv_by_version(input_file, output_dir=None, tag=None):
+    """按 Version 列分类 CSV 文件
+
+    tag: 输出目录下的子目录名，用于按时期区分分类结果（如 '20260511_20260517'）
+    """
     print(f"正在读取文件: {input_file}")
 
     version_data = defaultdict(list)
@@ -51,6 +54,8 @@ def split_csv_by_version(input_file, output_dir=None):
         output_dir = Path(input_file).parent / "split_by_version_output"
     else:
         output_dir = Path(output_dir)
+    if tag:
+        output_dir = output_dir / tag
     output_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"\n找到 {len(version_data)} 个不同版本:")
@@ -110,12 +115,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='按 Version 列分类 CSV 文件')
     parser.add_argument('-i', '--input', type=str, required=True, help='输入 CSV 文件路径')
     parser.add_argument('-o', '--output-dir', type=str, default=None, help='输出目录 (默认: 输入文件同目录)')
+    parser.add_argument('-t', '--tag', type=str, default=None, help='输出子目录名，用于按时期区分 (如 20260511_20260517)')
     args = parser.parse_args()
 
     if not os.path.exists(args.input):
         print(f"错误: 文件 '{args.input}' 不存在")
         exit(1)
 
-    result = split_csv_by_version(args.input, args.output_dir)
+    result = split_csv_by_version(args.input, args.output_dir, tag=args.tag)
     if result:
         print(str(result))

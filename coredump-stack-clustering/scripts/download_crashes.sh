@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# 下载 dde-file-manager 崩溃数据（全架构）
+# 下载指定 deb 包的全架构崩溃数据
 # 依赖: coredump-data-download/scripts/download_metabase_csv.sh
 #        accounts.json (Metabase 认证)
 
@@ -9,7 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILLS_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 DOWNLOAD_SCRIPT="$SKILLS_ROOT/coredump-data-download/scripts/download_metabase_csv.sh"
 
-PACKAGE="dde-file-manager"
+PACKAGE=""
 SYS_VERSION=""
 START_DATE=""
 END_DATE=""
@@ -20,19 +20,22 @@ usage() {
 用法: $0 [选项]
 
 选项:
-  --sys-version N      系统版本号过滤 (如 1075)
-  --start-date YYYY-MM-DD  开始日期
-  --end-date YYYY-MM-DD    结束日期
+  --package NAME       包名 (如 dde-file-manager / dde-dock) [必填]
+  --sys-version N      系统版本号过滤 (如 1075) [必填]
+  --start-date YYYY-MM-DD  开始日期 [必填]
+  --end-date YYYY-MM-DD    结束日期 [必填]
   --output-dir DIR     输出目录 (默认: 自动创建 download_<timestamp>/)
   -h, --help           显示帮助
 
 说明:
-  下载 dde-file-manager 全架构崩溃数据（不区分架构过滤）。
+  下载指定包的全架构崩溃数据（不区分架构过滤）。
 EOF
 }
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --package)
+            PACKAGE="${2:-}"; shift 2 ;;
         --sys-version)
             SYS_VERSION="${2:-}"; shift 2 ;;
         --start-date)
@@ -48,13 +51,14 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+if [[ -z "$PACKAGE" ]]; then
+    echo "错误: 必须指定 --package"; usage; exit 1
+fi
 if [[ -z "$SYS_VERSION" ]]; then
-    echo "错误: 必须指定 --sys-version"
-    exit 1
+    echo "错误: 必须指定 --sys-version"; usage; exit 1
 fi
 if [[ -z "$START_DATE" || -z "$END_DATE" ]]; then
-    echo "错误: 必须指定 --start-date 和 --end-date"
-    exit 1
+    echo "错误: 必须指定 --start-date 和 --end-date"; usage; exit 1
 fi
 if [[ ! -f "$DOWNLOAD_SCRIPT" ]]; then
     echo "错误: 找不到下载脚本 $DOWNLOAD_SCRIPT"
@@ -63,12 +67,12 @@ fi
 
 TS="${START_DATE//-/}_${END_DATE//-/}"
 if [[ -z "$OUTPUT_DIR" ]]; then
-    OUTPUT_DIR="$SCRIPT_DIR/../data/download_${TS}"
+    OUTPUT_DIR="$SCRIPT_DIR/../data/download_${PACKAGE}_${TS}"
 fi
 mkdir -p "$OUTPUT_DIR"
 
 echo "=========================================="
-echo "dde-file-manager 崩溃数据下载"
+echo "$PACKAGE 崩溃数据下载"
 echo "=========================================="
 echo "系统版本: $SYS_VERSION"
 echo "日期范围: $START_DATE ~ $END_DATE"

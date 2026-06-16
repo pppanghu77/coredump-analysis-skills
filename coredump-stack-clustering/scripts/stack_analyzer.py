@@ -3,10 +3,10 @@
 dde-file-manager 崩溃堆栈分析器
 融合自 crash-analysis skill 的 stack_analyzer.py
 
-对分类后的每版本数据进行堆栈聚类，按问题领域归类，生成：
-- analysis_{version}.csv         每个崩溃类型的详细分析
-- analysis_{version}_keyword_stats.csv  按领域的统计汇总
+对分类后的每版本数据进行堆栈聚类，生成：
+- analysis_{version}.csv         每个崩溃类型的详细分析（含百分比）
 """
+import hashlib
 import re
 import csv
 import os
@@ -16,23 +16,6 @@ from difflib import SequenceMatcher
 import multiprocessing as mp
 import time
 from pathlib import Path
-
-
-# dde-file-manager 专属关键词与问题类型映射（按优先级）
-PRIORITY_PATTERNS = [
-    ('deepin_platform_plugin', 'deepin_platform_plugin问题'),
-    ('(deleted)', '(deleted)问题'),
-    ('Splitter', 'Splitter导致的dfmplugin_workspace析构问题'),
-    ('getFileDisplayName', 'dfmplugin_workspace::getFileDisplayNam问题'),
-    ('dfmio', 'dfm-io问题'),
-    ('Thumbnail', '缩略图处理问题'),
-    ('removePersistentIndex', '文件视图析构问题'),
-    ('dfmplugin_workspace', '文管工作区问题'),
-    ('libdfm-base', '文管base工作区问题'),
-    ('FileView', '文件视图相关问题'),
-]
-
-KEYWORD_TO_TYPE = {k: v for k, v in PRIORITY_PATTERNS}
 
 
 def extract_stack_traces(file_content):
@@ -55,7 +38,7 @@ def get_stack_signature(trace):
     return '\n'.join(signature)
 
 
-def are_similar_stacks(stack1, stack2, threshold=0.9):
+def are_similar_stacks(stack1, stack2, threshold=0.75):
     """判断两个堆栈是否相似"""
     sig1 = get_stack_signature(stack1)
     sig2 = get_stack_signature(stack2)
@@ -113,14 +96,50 @@ def classify_stacks(traces, processes=None, num_processes=None):
     return classifications, process_classifications
 
 
-def guess_crash_reason(stack_trace):
-    """推测崩溃原因 - 按优先级匹配"""
-    lines = stack_trace.split('\n')[1:]
-    for keyword, reason in PRIORITY_PATTERNS:
-        for line in lines[:20]:
-            if keyword.lower() in line.lower():
-                return reason
-    return '未能确定具体原因'
+def clean_stack_trace(trace):
+    """去掉堆栈中的线程号、帧号、虚拟地址和偏移量，保留函数名和库信息"""
+    import re as _re
+    lines = trace.split('\n')
+    cleaned = []
+    for line in lines:
+        # 去掉线程号 (如 "Thread 12345" 或 "thread 42")
+        line = _re.sub(r'[Tt]hread\s+\d+', '', line)
+        # 去掉帧号 (如 "#0 " 或 "#123 ")
+        line = _re.sub(r'#\d+\s*', '', line)
+        # 去掉 0x 开头的十六进制地址
+        line = _re.sub(r'0x[0-9a-fA-F]+', '', line)
+        # 去掉 +0x 偏移量
+        line = _re.sub(r'\+0x[0-9a-fA-F]+', '', line)
+        # 去掉单独的 +数字 偏移
+        line = _re.sub(r'\+\d+', '', line)
+        # 压缩多余空格
+        line = _re.sub(r'\s+', ' ', line).strip()
+        cleaned.append(line)
+    return '\n'.join(cleaned)
+
+
+# 噪声库：跨版本 hash 时跳过这些帧，避免公共库帧导致过度分裂
+NOISE_LIBS = ['libc.so', 'libc-', 'libstdc++', 'libgcc_s', 'n/a', 'linux-vdso']
+
+
+def stable_hash(clean_trace, top_n=None):
+    """对完整 cleaned stack 全部帧做 hash，实现跨版本稳定且精确的追踪。
+
+    设计要点：
+    - clean_stack_trace 已统一去除线程号/帧号/十六进制地址/偏移，剩余的
+      "函数名 + 库路径"序列本身就是崩溃的稳定特征，可直接参与 hash。
+    - 不再额外过滤 NOISE_LIBS：早期为避免公共库帧导致过度分裂才过滤，但
+      clean 后已无地址偏移，过滤纯属多余；更严重的是对"符号缺失(n/a 占满)
+      的崩溃"，过滤会掏空整栈，导致完全不同的崩溃塌缩成同一个 hash
+      （实测 b3a43a1512f8 曾把 26 种不同栈误并为 1 个，趋势严重失真）。
+    - top_n：保留参数以兼容旧调用；默认 None 表示用全部帧（不截断）。
+    - 极端空栈回退用原始 cleaned 文本，避免空 hash。
+    """
+    lines = [ln for ln in clean_trace.split('\n') if ln.strip()]
+    if top_n is not None:
+        lines = lines[:top_n]
+    text = '\n'.join(lines) if lines else (clean_trace[:200] or '_empty_')
+    return hashlib.sha256(text.encode()).hexdigest()[:12]
 
 
 def read_stack_from_csv(csv_file, stack_column='StackInfo', exe_column='Exe'):
@@ -152,7 +171,8 @@ def write_analysis_results(classifications, output_file, process_classifications
     for class_id, traces in classifications.items():
         sample_trace = traces[0]
         summary = '\n'.join(sample_trace.split('\n')[1:6])
-        suspected_reason = guess_crash_reason(sample_trace)
+        clean_trace = clean_stack_trace(sample_trace)
+        type_hash = stable_hash(clean_trace)
 
         # 进程频次统计
         process_stats = ''
@@ -172,98 +192,41 @@ def write_analysis_results(classifications, output_file, process_classifications
         all_traces_str = "\n\n====================\n\n".join(all_traces_info)
 
         crash_info = {
-            'type': f'Type {class_id + 1}',
+            'type': type_hash,
             'count': len(traces),
             'summary': summary,
-            'reason': suspected_reason,
             'process_stats': process_stats,
             'full_trace': sample_trace,
+            'clean_trace': clean_trace,
             'all_traces': all_traces_str
         }
         crashes.append(crash_info)
 
+    # 按数量降序排列
+    crashes.sort(key=lambda c: c['count'], reverse=True)
+
+    total = sum(c['count'] for c in crashes)
+
     with open(output_file, 'w', newline='', encoding='utf-8') as f:
         writer = csv.writer(f, quoting=csv.QUOTE_ALL)
         writer.writerow([
-            'Crash Type', 'Count', 'Stack Summary', 'Suspected Reason',
-            'Process Stats', 'Full Stack Trace', 'All Traces (Max 5)', 'Notes'
+            'Crash Hash', 'Count', 'Percentage', 'Stack Summary',
+            'Process Stats', 'Full Stack Trace', 'Cleaned Stack (No Addr)',
+            'All Traces (Max 5)', 'Notes'
         ])
         for crash in crashes:
+            percentage = f"{crash['count'] / total * 100:.2f}%"
             writer.writerow([
-                crash['type'], crash['count'], crash['summary'],
-                crash['reason'], crash['process_stats'],
-                crash['full_trace'], crash['all_traces'], ''
+                crash['type'], crash['count'], percentage, crash['summary'],
+                crash['process_stats'],
+                crash['full_trace'], crash['clean_trace'],
+                crash['all_traces'], ''
             ])
 
-    known = sum(1 for c in crashes if c['reason'] != '未能确定具体原因')
-    print(f"  分类: {len(crashes)} 种类型, 已知: {known}, 未知: {len(crashes) - known}")
+    print(f"  分类: {len(crashes)} 种类型")
     print(f"  已写入: {output_file}")
 
-    # 生成关键词统计
-    stats_file = output_file.replace('.csv', '_keyword_stats.csv')
-    write_keyword_stats(classifications, stats_file, process_classifications)
-
     return crashes
-
-
-def write_keyword_stats(classifications, output_file, process_classifications=None):
-    """生成按领域的统计表"""
-    reason_stats = defaultdict(int)
-    reason_processes = defaultdict(list)
-    unknown_count = 0
-    unknown_processes = []
-    total_crashes = 0
-
-    for class_id, traces in classifications.items():
-        sample_trace = traces[0]
-        suspected_reason = guess_crash_reason(sample_trace)
-        trace_count = len(traces)
-        total_crashes += trace_count
-
-        procs = process_classifications.get(class_id, []) if process_classifications else []
-
-        if suspected_reason == '未能确定具体原因':
-            unknown_count += trace_count
-            unknown_processes.extend(procs)
-        else:
-            reason_stats[suspected_reason] += trace_count
-            reason_processes[suspected_reason].extend(procs)
-
-    reason_to_keyword = {v: k for k, v in KEYWORD_TO_TYPE.items()}
-
-    def format_proc_stats(process_list):
-        proc_counts = defaultdict(int)
-        for proc in process_list:
-            pname = proc.split('/')[-1] if proc else 'Unknown'
-            proc_counts[pname] += 1
-        sorted_procs = sorted(proc_counts.items(), key=lambda x: x[1], reverse=True)
-        total = len(process_list) or 1
-        return '; '.join([f"{n}({c}, {c/total*100:.1f}%)" for n, c in sorted_procs])
-
-    with open(output_file, 'w', newline='', encoding='utf-8') as f:
-        writer = csv.writer(f, quoting=csv.QUOTE_ALL)
-        writer.writerow(['Keyword', 'Issue Type', 'Total Count', 'Percentage', 'Process Stats'])
-
-        sorted_stats = sorted(reason_stats.items(), key=lambda x: x[1], reverse=True)
-        for reason, count in sorted_stats:
-            keyword = reason_to_keyword.get(reason, 'Unknown')
-            percentage = f"{count / total_crashes * 100:.2f}%"
-            writer.writerow([keyword, reason, count, percentage,
-                             format_proc_stats(reason_processes[reason])])
-
-        if unknown_count > 0:
-            writer.writerow(['Unknown', '未能确定具体原因', unknown_count,
-                             f"{unknown_count / total_crashes * 100:.2f}%",
-                             format_proc_stats(unknown_processes)])
-
-        all_procs = []
-        for procs in reason_processes.values():
-            all_procs.extend(procs)
-        all_procs.extend(unknown_processes)
-        writer.writerow(['Total', '全部问题', total_crashes, '100.00%',
-                         format_proc_stats(all_procs)])
-
-    print(f"  关键词统计: {output_file}")
 
 
 def analyze_csv(input_path, output_dir):
